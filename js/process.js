@@ -4,7 +4,7 @@
  * to access things we don't want it to.
  */
 
-// 'use strict';
+'use strict';
 
 function Api() {
     
@@ -25,12 +25,16 @@ const program = {
     api: api
 };
 
+// disallow eval.* since they escape the sandbox
+eval.call = () => { throw new Error('Cannot use eval.call() in this context!'); }
+eval.bind = () => { throw new Error('Cannot use eval.bind() in this context!'); }
+eval.apply = () => { throw new Error('Cannot use eval.apply() in this context!'); }
+
 // This isn't really a proper block list, its probably
 // really easy to bypass. Purpose of this is moreso to prevent easy indexedDB access.
 const blocklist = [
     'self',
     'globalThis',
-    'eval',
     'Function',
     'indexedDB',
     'importScripts'
