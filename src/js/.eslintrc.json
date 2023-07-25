@@ -13,9 +13,9 @@
     "rules": {
         "no-undef": "error",
         "quotes": ["error", "single"],
-        "semi": "error",
         "curly": "error",
-        "no-unused-vars": "warn"
+        "no-unused-vars": "warn",
+        "no-extra-semi": "error"
     },
     "root": true
 }
