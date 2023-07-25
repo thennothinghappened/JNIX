@@ -142,7 +142,7 @@ export default async function init(
 }
 ```
 
-This is a completely unfinalised example and it might change a lot from here. Of note, type definitions do make this harder when interacting with non-builtin modules, and modules which fail to load are also in charge of cleaning up anything they have done so far.
+This is a completely unfinalised example and it might change a lot from here. <del>Of note, type definitions do make this harder when interacting with non-builtin modules, and modules which fail to load are also in charge of cleaning up anything they have done so far.</del> No longer planning to use TS for this project.
 
 ## Goals
 
