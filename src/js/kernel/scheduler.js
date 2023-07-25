@@ -111,7 +111,7 @@ class Scheduler {
      * @param { string } url URL or Blob URL of the code
      * @param { number } uid User ID of the process
      * @param { number } gid Group ID of the process
-     * @param { {} } env Environment variables for the process
+     * @param { { [key: string]: string } } env Environment variables for the process
      * @param { string[] } args Arguments the process was started with
      * @returns { Promise<number> }
      */
@@ -139,16 +139,6 @@ class Scheduler {
 
         return pid;
 
-    }
-
-    // debug
-    get processes() {
-        return this.#process_table;
-    }
-
-    // debug
-    get process_queue() {
-        return this.#process_start_queue;
     }
 
 }

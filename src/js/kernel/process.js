@@ -18,7 +18,7 @@ export class Process {
      * @param { string } url URL or data blob URL for the Worker
      * @param { number } uid User ID of the process
      * @param { number } gid Group ID of the process
-     * @param { {} } env Environment variables for the process
+     * @param { { [key: string]: string } } env Environment variables for the process
      * @param { string[] } args Arguments the process was started with
      * @param { ( process: Process, call: number, data?: any ) => void } messageHandler Callback for messages received
      */

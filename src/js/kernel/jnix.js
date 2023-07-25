@@ -1,8 +1,11 @@
 import { scheduler } from '/js/kernel/scheduler.js';
 
-async function blah() {
-    const pid = await scheduler.process_start( '/js/lib/programs/test.js', 0, 0, {}, ['test'] );
+/**
+ * @param {string} path 
+ */
+async function blah(path) {
+    const pid = await scheduler.process_start( path, 0, 0, { 'TERM': 'jterm' }, [ path ] );
 }
 
-blah()
+blah('/js/lib/programs/test.js');
 scheduler.process_queue_allocate();
