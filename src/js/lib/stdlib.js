@@ -17,9 +17,22 @@ let env;
 let args;
 
 /** @type { number } */
+let ppid;
+/** @type { number } */
+let pid;
+/** @type { number } */
 let uid;
 /** @type { number } */
 let gid;
+
+/**
+ * File Descriptor table for this process, used for I/O
+ * 
+ * This list is mirrored with the relevant data on the Kernel side.
+ * 
+ * @type { Map<number, > }
+ */
+const fd_table = new Map();
 
 /**
  * IMPORTANT!
@@ -68,6 +81,34 @@ export function getenv( name ) {
 }
 
 /**
+ * Returns the Parent PID of the process
+ */
+export function getppid() {
+    return ppid;
+}
+
+/**
+ * Returns the Process ID of the process
+ */
+export function getpid() {
+    return pid;
+}
+
+/**
+ * Returns the Group ID of the process
+ */
+export function getgid() {
+    return gid;
+}
+
+/**
+ * Returns the User ID of the process
+ */
+export function getuid() {
+    return uid;
+}
+
+/**
  * Handler for onmessage
  * @param { MessageEvent } event 
  */
@@ -94,6 +135,8 @@ function init_handler( event ) {
     /** @type { import("./types").KInitData } */
     const init_data = msg.data;
 
+    ppid = init_data.ppid;
+    pid = init_data.pid;
     uid = init_data.uid;
     gid = init_data.gid;
     env = init_data.env;

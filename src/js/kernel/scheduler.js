@@ -2,10 +2,12 @@ import { Process } from './process.js';
 
 class Scheduler {
 
-    static #max_processes = 200;
+    static #max_processes = 30;
     static #max_user_processes = 20;
 
+    /** @type { Map<number, Process> } */
     #process_table = new Map();
+    /** @type { { uid: number, resolve: ( pid: number ) => void }[] } */
     #process_start_queue = new Array();
     #pid_index = 0;
 
@@ -58,7 +60,8 @@ class Scheduler {
             }
 
             // Allocate the new process
-            req.resolve( this.#process_id_get() );
+            const pid = this.#process_id_get();
+            req.resolve( pid );
         }
 
     }
@@ -71,8 +74,15 @@ class Scheduler {
      */
     #process_id_get = ( ) => {
 
-        while ( this.#process_table.get( this.#pid_index ) !== undefined ) {
+        let give_up = 100;
+
+        while ( 
+            this.#process_table.get( this.#pid_index ) !== undefined
+        ) {
+            give_up --;
             this.#pid_index ++;
+
+            if (give_up <= 0) return -1;
 
             if ( this.#pid_index >= Scheduler.#max_processes ) {
                 this.#pid_index = 0;
@@ -109,35 +119,39 @@ class Scheduler {
      * Add a process to the queue to be started.
      * Once successful, the process' PID will be returned.
      * @param { string } url URL or Blob URL of the code
+     * @param { number } ppid Parent Process ID of the process
      * @param { number } uid User ID of the process
      * @param { number } gid Group ID of the process
      * @param { { [key: string]: string } } env Environment variables for the process
      * @param { string[] } args Arguments the process was started with
      * @returns { Promise<number> }
      */
-    process_start = async ( url, uid, gid, env, args ) => {
+    process_start = async ( url, ppid, uid, gid, env, args ) => {
         
         // debug, prevents browser caching result for now
         url += `?a=${Math.round(Math.random() * 100000)}`;
 
         // some evil stuff that should be rewritten!
+        /** @type { (value: number) => void } */
         let _resolve;
-        const p = new Promise((resolve) => { _resolve = resolve; });
+        const pid = new Promise((resolve) => { _resolve = resolve; });
 
         this.#process_start_queue.push({
             uid: uid,
-            resolve: _resolve
+            /** @ts-ignore */
+            resolve: ( pid ) => {
+                console.log('a');
+                const process = new Process( url, ppid, pid, uid, gid, env, args, ( process, call, data ) => {
+                    // console.log(process, call, data);
+                } );
+        
+                this.#process_table.set( pid, process );
+
+                _resolve( pid );
+            }
         });
 
-        const pid = await p;
-
-        const process = new Process( url, uid, gid, env, args, ( process, call, data ) => {
-            console.log(process, call, data);
-        } );
-
-        this.#process_table.set( pid, process );
-
-        return pid;
+        return await pid;
 
     }
 

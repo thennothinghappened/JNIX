@@ -8,24 +8,32 @@ import { Signal } from '/js/lib/types.js';
 export class Process {
 
     #worker;
+    #ppid;
+    #pid;
     #uid;
     #gid;
+    #url;
 
     #messageHandler;
 
     /**
      * Instantiate the process
      * @param { string } url URL or data blob URL for the Worker
+     * @param { number } ppid Parent Process ID of the process
+     * @param { number } pid Process ID of the process
      * @param { number } uid User ID of the process
      * @param { number } gid Group ID of the process
      * @param { { [key: string]: string } } env Environment variables for the process
      * @param { string[] } args Arguments the process was started with
      * @param { ( process: Process, call: number, data?: any ) => void } messageHandler Callback for messages received
      */
-    constructor( url, uid, gid, env, args, messageHandler ) {
-        
+    constructor( url, ppid, pid, uid, gid, env, args, messageHandler ) {
+        this.#ppid = ppid;
+        this.#pid = pid;
         this.#uid = uid;
         this.#gid = gid;
+        this.#url = url;
+
         this.#worker = new Worker( url, { type: 'module' } );
         this.#messageHandler = messageHandler;
 
@@ -33,6 +41,8 @@ export class Process {
 
         // Send the INIT signal with initialisation data.
         this.send_message( Signal.INIT, {
+            ppid: ppid,
+            pid: pid,
             uid: uid,
             gid: gid,
             env: env,
@@ -60,6 +70,14 @@ export class Process {
             signal: signal,
             data: data
         }, transferables);
+    }
+
+    get ppid() {
+        return this.#ppid;
+    }
+
+    get pid() {
+        return this.#pid;
     }
 
     get uid() {
