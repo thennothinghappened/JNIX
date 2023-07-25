@@ -4,7 +4,7 @@
 
 /**
  * @typedef KMessage Message sent from the Kernel to a process
- * @prop { number } signal Kernel Signal enum value
+ * @prop { Signal } signal Kernel Signal enum value
  * @prop { any } [data] Associated data
  */
 
@@ -18,14 +18,16 @@
 
 /**
  * @typedef PMessage Syscall sent by a process to the Kernel
- * @prop { number } syscall Kernel Syscall enum value
+ * @prop { Syscall } syscall Kernel Syscall enum value
  * @prop { any } [data] Associated data
  */
 
 /**
  * Signals sent to processes by the Kernel
+ * @readonly
+ * @enum { number }
  */
-export const Signals = {
+export const Signal = {
     // Sent on process initialisation
     INIT: 0,
 
@@ -33,8 +35,10 @@ export const Signals = {
 
 /**
  * Syscalls sent to the Kernel by processes
+ * @readonly
+ * @enum { number }
  */
-export const Syscalls = {
+export const Syscall = {
     // Sent in reply to INIT signal
     INIT: 0,
 };

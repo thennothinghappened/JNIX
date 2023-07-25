@@ -8,7 +8,7 @@
  * with the Kernel, the Filesystem, and more.
  */
 
-import { Signals, Syscalls } from '/js/lib/types.js';
+import { Signal, Syscall } from '/js/lib/types.js';
 
 /** @type { { [key: string]: string } } */
 let env;
@@ -45,7 +45,12 @@ export function init(
         init_handler( event );
 
         // Switch over to the proper handler
-        self.onmessage = onmessage_handler;
+        this.onmessage = onmessage_handler;
+
+        // Send the reply message
+        this.postMessage({
+            call: Syscall.INIT
+        });
 
         // Start user code
         main( args );
@@ -72,7 +77,7 @@ function onmessage_handler( event ) {
 
     // Handle Kernel messages
     switch ( msg.signal ) {
-
+        
     }
 }
 

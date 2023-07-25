@@ -1,0 +1,11 @@
+{
+    "compilerOptions": {
+        "lib": [
+            "WebWorker",
+            "ESNext"
+        ],
+        "paths": {
+            "/js/*": ["../*"]
+        }
+    }
+}

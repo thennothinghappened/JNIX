@@ -1,4 +1,4 @@
-import { Signals } from '../lib/types.js';
+import { Signal } from '/js/lib/types.js';
 
 /**
  * Kernel representation of a process.
@@ -32,7 +32,7 @@ export class Process {
         this.#worker.onmessage = this.#on_message_received;
 
         // Send the INIT signal with initialisation data.
-        this.send_message( Signals.INIT, {
+        this.send_message( Signal.INIT, {
             uid: uid,
             gid: gid,
             env: env,

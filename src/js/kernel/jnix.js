@@ -1,7 +1,7 @@
-import { scheduler } from './scheduler.js';
+import { scheduler } from '/js/kernel/scheduler.js';
 
 async function blah() {
-    const pid = await scheduler.process_start( '/js/programs/test.js', 0, 0, {}, ['test'] );
+    const pid = await scheduler.process_start( '/js/lib/programs/test.js', 0, 0, {}, ['test'] );
 }
 
 blah()
