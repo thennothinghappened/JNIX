@@ -11,7 +11,7 @@ The UNIX filesystem is a very important part of the OS, so here's my plan at the
 At the moment, I'm planning to stick close to the `inode` approach, but with some changes with how it makes sense to do things in JS:
 
 `inodes` are keys, where the key is a positive integer. The value of the `inode` is file metadata, stored as JSON with the structure:
-```json
+```json5
 {
     /*
     The name of the partition the file data is stored on.
@@ -31,29 +31,16 @@ At the moment, I'm planning to stick close to the `inode` approach, but with som
 
     /*
     Permission information about this file.
-    We store the mode here the same way you'll see it appear in chmod, and as an array as that makes things slightly less verbose to read permissions back.
-    
-    The numbers, in order, are the permissions for user, group, everyone.
-
-    read    = 4
-    write   = 2
-    execute = 1
-
-    4 + 2 + 1 = 7, so all permissions = 7.
-
-    These permissions can be converted back using:
-    read    = mode[index] & 0b100 >>> 2
-    write   = mode[index] &  0b10 >>> 1
-    execute = mode[index] &   0b1 >>> 0
+    See https://www.kernel.org/doc/html/latest/filesystems/ext4/inodes.html?highlight=inode#i-mode
     */
-    "mode": [7, 7, 7]
+    "mode": 256
 
 }
 ```
 *On IndexedDB*, each disk contains a list of partitions, and each partition has an accompanying store containing the `inodes`. A disk has the name `idbX`, where `X` is a positive number.
 
 Disks are separate IndexedDB Databases, and their `objectStores` contain both their list of partitions, and those partitions' metadata (as `PARTITION_NAMEmeta`), which includes the list of `inodes`, their name, etc:
-```json
+```json5
 // Top level databases
 {
     "idb0": {
@@ -91,6 +78,71 @@ This info will appear as a struct in the form:
 }
 ```
 Which `stdlib` will populate automatically for the program.
+
+**Update**: an idea for approaching file handling better, which overcomes the issue of one transaction at a time for writing to files, giving control back to the Kernel over the filesystem, and hopefully reducing the likelyhood of memory leaks (a process can be automatically deregistered from a file this way if it no longer appears to be active), while also making it a lot simpler to abstract and centralise the implementation of the VFS.
+
+The new plan is to make use of the `MessageChannel` API. Essentially, a process will send a syscall (lingo for request in this case) to the Kernel to ask to open a file for reading or writing, or both. The Kernel maintains a second process table which does not contribute to the `PID` table, which has a list of open file "handlers". Each file handler is a Worker instantiated by the Kernel for that file.
+
+When a process asks for a handle to a file, the Kernel checks if a handler exists. If not, it creates one with init information regarding which file, and adds it to the table. Once this is done, or if a file handler already existed, it sends a message to the handler detailing the `UID`, `GID` and `PID` of the requesting process, and the mode they wish to open the file in.
+
+The handler decides whether or not to accept this - depending on if the permissions line up correctly with the file's permissions. If the handler declines, the Kernel passes along this. If the handler accepts, it creates a new `MessageChannel` for the process. The handler sends the `port2` back to the Kernel, which forwards it to the process.
+
+Now, the process can directly communicate with this file handler, and ask it to perform the operations allows with the requested mode. The result of this, is a first-come-first-serve system that allows multiple programs to access the same file, but in a synchronous manor, so that multiple reads and writes can be queued with order maintained.
+
+This also removes a lot of complexity for the process, and for `stdlib` - rather than handling actual files, or requiring any information about the disk setup, or any issues regarding multiple processes writing at once, a process can simply request a handle to read or write to a file, and no matter if that file exists on `IndexedDB`, in a Virtual filesystem (such as `/proc`), or may be a device, or otherwise non-standard file, the communication method remains the same, and processes only worry about reading and writing.
+
+## Kernel Modules
+Kernel modules are going to be an important part of making this OS work - interacting with the display as a Canvas, getting keyboard and mouse, etc, even the filesystem itself need portions as modules to function.
+
+The current plan for implementing these modules, is to make use of something a bit safer than `IndexedDB` - in terms of, the processes can't modify it. This is where `localStorage` comes in. `localStorage` is the plan for storing two things:
+
+  1. Which partition to boot off
+  2. Kernel modules to load at startup
+
+The important part here, is the Kernel module list. Kernel modules will be referenced either by an absolute path on the server - this includes anything base included with the OS, such as the `display` driver, `keyboard`, `terminal` (which will govern the `ttyX` sessions, in terms of supplying them with keyboard input, and drawing their output to the display, unless another driver uses the display instead.)
+
+Kernel modules are the most dangerous territory in the OS, aside from the Kernel itself! Unhandled errors here *will* crash the entire system - which to an extent is a good thing, in preventing buggy code making it here.
+
+The current approach for implementing Kernel modules will be using [Dynamic Imports](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import). Kernel modules will export two important **asynchronous** functions: `init()`, and `deinit()`. If a module is loaded by the Kernel, it will call `init()`, passing in two methods: `load_module`, and `unload_module`.
+
+`load_module(string)` will return a `Promise`, resolving if the module was loaded to a reference of that module, or rejecting if the module could not be found, or failed to start. `unload_module(string)` will conversely return a `Promise`, resolving whether module has unloaded (the Kernel calls `module.deinit()`).
+
+As an example, a theoretical implementation of the `terminal` module may require `display` and `keyboard` loaded, and `compositor` unloaded:
+```ts
+import { IModule, ITerminalModule, IKeyboardModule, IDisplayModule } from '/js/module_defs.mjs';
+
+export default async function init( 
+    load_module: async (string) => Promise<IModule>, 
+    unload_module: async (string) => Promise<boolean>
+): boolean {
+  // If the module fails to unload, we stop loading now.
+  if ( !await unload_module( 'compositor' ) ) {
+    return false;
+  }
+
+  let keyboard: IKeyboardModule, display: IDisplayModule;
+
+  // Load keyboard and display. If they fail to load, we stop loading.
+  
+  try {
+    keyboard = <IKeyboardModule>(await load_module( 'keyboard' ));
+    display = <IDisplayModule>(await load_module( 'display' ));
+  } catch (e: Error) {
+    return false;
+  }
+
+  keyboard.addEventListener('keypress', (key: string) => {
+    // Handle the keypress...
+  });
+
+  // ...
+
+  // Specify we loaded successfully.
+  return true;
+}
+```
+
+This is a completely unfinalised example and it might change a lot from here. Of note, type definitions do make this harder when interacting with non-builtin modules, and modules which fail to load are also in charge of cleaning up anything they have done so far.
 
 ## Goals
 
