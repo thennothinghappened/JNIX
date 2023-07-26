@@ -58,7 +58,7 @@ export function init(
         init_handler( event );
 
         // Switch over to the proper handler
-        self.onmessage = onmessage_handler;
+        self.onmessage = on_message_received;
 
         // Send the reply message
         self.postMessage({
@@ -128,10 +128,9 @@ const kmessage_queue = new Map();
 
 /**
  * Handler for onmessage
- * @param { MessageEvent } event 
+ * @param { MessageEvent<import('/js/lib/types.js').KMessage> } event 
  */
-function onmessage_handler( event ) {
-    /** @type { import("./types").KMessage } */
+function on_message_received( event ) {
     const msg = event.data;
 
     /** 
@@ -144,15 +143,21 @@ function onmessage_handler( event ) {
      */
     switch ( msg.signal ) {
 
-        case Signal.HEARTBEAT:
+        case Signal.HEARTBEAT: {
             // Respond immediately to say we're alive
             self.postMessage({
                 syscall: Syscall.HEARTBEAT,
                 identifier: msg.identifier
             });
             break;
+        }
+        
+        case Signal.NEWPPID: {
+            ppid = msg.data;
+            break;
+        }
 
-        default:
+        default: {
             // Pass the message on to the relevant resolver in the queue.
             const resolver = kmessage_queue.get( msg.identifier );
 
@@ -167,6 +172,7 @@ function onmessage_handler( event ) {
             // Remove the entry.
             kmessage_queue.delete( msg.identifier );
             break;
+        }
     }
 }
 
@@ -174,10 +180,9 @@ function onmessage_handler( event ) {
  * Handler to set up the program after INIT signal.
  * Should only ever be called once.
  * 
- * @param { MessageEvent } event 
+ * @param { MessageEvent<import('/js/lib/types.js').KMessage> } event 
  */
 function init_handler( event ) {
-    /** @type { import("./types").KMessage } */
     const msg = event.data;
 
     /** @type { import("./types").KInitData } */

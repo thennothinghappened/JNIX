@@ -1,5 +1,7 @@
 {
     "compilerOptions": {
+        "checkJs": true,
+        "strict": true,
         "lib": [
             "WebWorker",
             "ESNext"

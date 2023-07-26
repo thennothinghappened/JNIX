@@ -2,7 +2,7 @@ import { Process } from './process.js';
 
 class Scheduler {
 
-    static #max_processes = 30;
+    static #max_processes = 300;
     static #max_user_processes = 20;
 
     /** @type { Map<number, Process> } */
@@ -116,6 +116,68 @@ class Scheduler {
     }
 
     /**
+     * Handler for messages received from a process.
+     * @param { Process } process 
+     * @param { MessageEvent<import('../lib/types.js').PMessage> } msg 
+     */
+    #on_process_message = ( process, msg ) => {
+        
+    }
+
+    /**
+     * Handler for process errors:
+     * Called when a process crashes, terminates the thread and and cleans up.
+     * @param { Process } process
+     * @param { Error } error
+     */
+    #on_process_error = ( process, error ) => {
+        console.error( `PID ${process.pid} had an error: ${error} \n\tKilling the process!` );
+        this.process_kill( process.pid );
+    }
+
+    /**
+     * Handler for process syscall errors:
+     * Called when a syscall is invalid, or cannot be deserialised.
+     * @param { Process } process
+     * @param { MessageEvent<import('../lib/types.js').PMessage?> } msg
+     */
+    #on_process_syscall_error = ( process, msg ) => {
+
+    }
+
+    /**
+     * Kill a process.
+     * 
+     * This method will take care of any cleanup work such as unlinking
+     * file descriptors, and reparenting child processes.
+     * 
+     * @param { number } pid Process ID to kill
+     * @returns { Promise<boolean> } Whether process was killed - `false` if didn't exist.
+     */
+    process_kill = async ( pid ) => {
+        const process = this.#process_table.get( pid );
+
+        if ( process === undefined ) {
+            return false;
+        }
+
+        this.#process_table.delete( pid );
+
+        // Change parent process for each child process
+        process.children.forEach( ( pid ) => {
+            const process = this.#process_table.get( pid );
+            // @ts-ignore
+            process.ppid = 0;
+        } );
+
+        /* Cleanup goes here later */
+
+        process.kill();
+
+        return true;
+    }
+
+    /**
      * Add a process to the queue to be started.
      * Once successful, the process' PID will be returned.
      * @param { string } url URL or Blob URL of the code
@@ -127,29 +189,27 @@ class Scheduler {
      * @returns { Promise<number> }
      */
     process_start = async ( url, ppid, uid, gid, env, args ) => {
-        
-        // debug, prevents browser caching result for now
-        url += `?a=${Math.round(Math.random() * 100000)}`;
 
-        // some evil stuff that should be rewritten!
-        /** @type { (value: number) => void } */
-        let _resolve;
-        const pid = new Promise((resolve) => { _resolve = resolve; });
+        /** @type { Promise<number> } */
+        const pid = new Promise( ( resolve ) => {
 
-        this.#process_start_queue.push({
-            uid: uid,
-            /** @ts-ignore */
-            resolve: ( pid ) => {
-                console.log('a');
-                const process = new Process( url, ppid, pid, uid, gid, env, args, ( process, call, data ) => {
-                    // console.log(process, call, data);
-                } );
-        
-                this.#process_table.set( pid, process );
+            this.#process_start_queue.push({
+                uid: uid,
+                resolve: ( pid ) => {
+                    // Create the new process with the given PID, add to the table, and return the PID.
+                    const process = new Process(
+                        url, ppid, pid, uid, gid, env, args,
+                        this.#on_process_message,
+                        this.#on_process_error,
+                        this.#on_process_syscall_error
+                    );
 
-                _resolve( pid );
-            }
-        });
+                    this.#process_table.set( pid, process );
+    
+                    resolve( pid );
+                }
+            });
+        } );
 
         return await pid;
 

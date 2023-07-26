@@ -27,7 +27,9 @@
  */
 
 /**
- * Max length in milliseconds in which a program must
+ * Interval between heartbeat signals.
+ * 
+ * Used as max length in milliseconds in which a program must
  * respond to a {@link Signal.HEARTBEAT}, before the Kernel
  * will assume it to have crashed or otherwise stopped unexpectedly.
  * 
@@ -39,8 +41,7 @@
  * 
  * @see {@link Syscall.HEARTBEAT}
  */
-export const heartbeat_grace_period = 5000;
-export const heartbeat_interval = 500;
+export const heartbeat_interval = 1000;
 
 /**
  * Signals sent to processes by the Kernel
@@ -74,6 +75,10 @@ export const Signal = {
      * If not responded to within a
      */
     HEARTBEAT: 3,
+    /**
+     * Sent when the process is reassigned to a new Parent Process ID.
+     */
+    NEWPPID: 4,
 };
 
 /**
@@ -108,7 +113,7 @@ export const Syscall = {
     EXEC: 2,
     /**
      * Response to {@link Signal.HEARTBEAT}
-     * @see {@link heartbeat_grace_period}
+     * @see {@link heartbeat_interval}
      */
     HEARTBEAT: 3,
     /**
