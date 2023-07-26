@@ -174,6 +174,9 @@ class Scheduler {
 
         process.kill();
 
+        // Allocate new processes waiting in the queue
+        this.process_queue_allocate();
+
         return true;
     }
 

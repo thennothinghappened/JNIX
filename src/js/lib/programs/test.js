@@ -6,7 +6,7 @@ import { getenv, getpid, init } from '/js/lib/stdlib.js';
  */
 async function main( args ) {
     
-    console.log( `Hi from PID ${getpid()}! Env TERM: ${getenv('TERM')}` );
+    // console.log( `Hi from PID ${getpid()}! Env TERM: ${getenv('TERM')}` );
 
 }
 
