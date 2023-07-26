@@ -1,4 +1,4 @@
-import { Signal } from '/js/lib/types.js';
+import { Signal, heartbeat_interval, heartbeat_grace_period, Syscall } from '/js/lib/types.js';
 
 /**
  * Kernel representation of a process.
@@ -15,6 +15,24 @@ export class Process {
     #url;
 
     #messageHandler;
+    #initialised = false;
+
+    /**
+     * Message queue.
+     * 
+     * The message queue is a Map containing all tracked messages awaiting
+     * a response from the Kernel. Each message is tied to a unique identifier,
+     * which the Kernel will use when addressing this specific message.
+     * 
+     * This system is used as messages may be replied to in a different order
+     * than they were sent.
+     * 
+     * When a reply to the message is received, the `Promise` will be resolved
+     * with the message data.
+     * 
+     * @type { Map<number, ( msg: import('/js/lib/types.js').PMessage ) => void> }
+     */
+    #pmessage_queue = new Map();
 
     /**
      * Instantiate the process
@@ -37,10 +55,21 @@ export class Process {
         this.#worker = new Worker( url, { type: 'module' } );
         this.#messageHandler = messageHandler;
 
+        // End the process if it doesn't respond in the grace period.
+        setTimeout( () => {
+            if ( this.#initialised ) {
+                return;
+            }
+
+            // TODO: handle failed response in grace period!
+            console.warn(`PID ${this.#pid} failed to make handshake.`);
+
+        }, heartbeat_grace_period );
+
         this.#worker.onmessage = this.#on_message_received;
 
         // Send the INIT signal with initialisation data.
-        this.send_message( Signal.INIT, {
+        const init_reply = this.signal( Signal.INIT, {
             ppid: ppid,
             pid: pid,
             uid: uid,
@@ -49,6 +78,30 @@ export class Process {
             args: args
         } );
 
+        init_reply.then( (msg) => {
+            if ( msg.syscall !== Syscall.INIT ) {
+                console.log(msg);
+                return;
+            }
+            
+            this.#initialised = true;
+        } )
+
+    }
+
+    /**
+     * Find a new vaild identifier for a message we are sending.
+     * @returns { number }
+     */
+    #get_identifier = () => {
+
+        let i = 0;
+        while ( this.#pmessage_queue.has( i ) ) {
+            i ++;
+        }
+
+        return i;
+
     }
 
     /**
@@ -56,19 +109,56 @@ export class Process {
      * @param { MessageEvent } event Message from Worker
      */
     #on_message_received = ( event ) => {
-        this.#messageHandler( this, event.data.call, event.data.data );
+        /** @type { import('/js/lib/types.js').PMessage } */
+        const msg = event.data;
+
+        // First check if we are expecting a response already:
+        const handler = this.#pmessage_queue.get( msg.identifier );
+        if ( handler !== undefined ) {
+
+            this.#pmessage_queue.delete( msg.identifier );
+            return handler( msg );
+        }
+
+        this.#messageHandler( this, msg.syscall, msg.data );
+    }
+
+    /**
+     * Send a signal to the process, expecting a reply.
+     * @param { number } signal Signal number
+     * @param { any } [data] Data to send
+     * @param { Transferable[] } [transferables] Transferable objects
+     * @returns { Promise<import('/js/lib/types.js').PMessage> }
+     */
+    signal = ( signal, data, transferables ) => {
+
+        const identifier = this.#get_identifier();
+
+        /** @type { Promise<import('/js/lib/types.js').PMessage> } */
+        const promise = new Promise( ( resolve ) => {
+            this.#pmessage_queue.set( identifier, ( msg ) => {
+                this.#pmessage_queue.delete( identifier );
+                resolve( msg );
+            } );
+        } );
+
+        this.#send_message( identifier, signal, data, transferables );
+
+        return promise;
     }
 
     /**
      * Wrapper for postMessage to talk to the process.
+     * @param { number } identifier Unique identifier for the message.
      * @param { number } signal Signal number
      * @param { any } [data] Data to send
      * @param { Transferable[] } [transferables] Transferable objects
      */
-    send_message = ( signal, data, transferables = [] ) => {
+    #send_message = ( identifier, signal, data, transferables = [] ) => {
         this.#worker.postMessage({
             signal: signal,
-            data: data
+            data: data,
+            identifier: identifier
         }, transferables);
     }
 

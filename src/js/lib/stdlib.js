@@ -30,7 +30,7 @@ let gid;
  * 
  * This list is mirrored with the relevant data on the Kernel side.
  * 
- * @type { Map<number, > }
+ * @type {  }
  */
 const fd_table = new Map();
 
@@ -58,11 +58,12 @@ export function init(
         init_handler( event );
 
         // Switch over to the proper handler
-        this.onmessage = onmessage_handler;
+        self.onmessage = onmessage_handler;
 
         // Send the reply message
-        this.postMessage({
-            call: Syscall.INIT
+        self.postMessage({
+            syscall: Syscall.INIT,
+            identifier: event.data.identifier
         });
 
         // Start user code
@@ -109,6 +110,23 @@ export function getuid() {
 }
 
 /**
+ * Message queue.
+ * 
+ * The message queue is a Map containing all tracked messages awaiting
+ * a response from the Kernel. Each message is tied to a unique identifier,
+ * which the Kernel will use when addressing this specific message.
+ * 
+ * This system is used as messages may be replied to in a different order
+ * than they were sent.
+ * 
+ * When a reply to the message is received, the `Promise` will be resolved
+ * with the message data.
+ * 
+ * @type { Map<number, ( msg: import('/js/lib/types.js').KMessage ) => void> }
+ */
+const kmessage_queue = new Map();
+
+/**
  * Handler for onmessage
  * @param { MessageEvent } event 
  */
@@ -116,9 +134,39 @@ function onmessage_handler( event ) {
     /** @type { import("./types").KMessage } */
     const msg = event.data;
 
-    // Handle Kernel messages
+    /** 
+     * Handle Kernel signals.
+     * 
+     * Messages are always passed through here first,
+     * so that they will be replied to in the expected manor
+     * immediately in the case of anything that is not used
+     * by the end program, such as 
+     */
     switch ( msg.signal ) {
-        
+
+        case Signal.HEARTBEAT:
+            // Respond immediately to say we're alive
+            self.postMessage({
+                syscall: Syscall.HEARTBEAT,
+                identifier: msg.identifier
+            });
+            break;
+
+        default:
+            // Pass the message on to the relevant resolver in the queue.
+            const resolver = kmessage_queue.get( msg.identifier );
+
+            if ( resolver === undefined ) {
+                // This should *never* happen. If it did, something went really wrong
+                // so we should error out.
+                throw new Error('stdlib failed to handle a Kernel signal.');
+            }
+
+            resolver( msg );
+
+            // Remove the entry.
+            kmessage_queue.delete( msg.identifier );
+            break;
     }
 }
 
