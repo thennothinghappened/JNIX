@@ -143,7 +143,88 @@ This does enforce some requirements on libraries. Namely, libraries MUST use `ex
 
 `export default {...}` is picked up on library import and converted to `return {...}`, which completes this very silly solution.
 
-The linking process is recursive, meaning that these libraries will first be linked to their own imports. This does mean its possible to circularly link libraries to eachother, so don't do that! (may ensure this doesn't happen inside the linker)
+The linking process will work a bit like a 'baked' version of how modules are resolved in regular ES modules: the linker builds a dependency graph, and uses this to determine the final order that everything should be placed in the file to provide all the needed dependencies. To prevent leaking dependencies into the final scope, it looks like the final solution may involve layers of nested closure whenever dependencies are not `import`ed by the final files.
+
+**For example:**
+
+`main.mjs`:
+```js
+import examplelib from '/usr/lib/examplelib.mjs';
+import libjsh from '/js/lib/libjsh.mjs';
+
+libjsh.exec(`echo ${examplelib.hi()}`);
+```
+
+`examplelib.mjs`:
+```js
+import fs from '/js/lib/fs.mjs';
+
+function hi() {
+  fs.write( 0, 'hi from examplelib' );
+  return 'hi :)';
+}
+
+export default {
+  hi: hi
+};
+```
+
+`libjsh.mjs`:
+```js
+import fs from '/js/lib/fs.mjs';
+
+function exec( string ) {
+  // ... (example code)
+  const cmd = string.split(' ');
+  if ( cmd[0] === 'echo' ) {
+    fs.write( 0, cmd[1] );
+  }
+}
+
+export default {
+  exec: exec
+};
+```
+
+**Compiles to, when statically linked:**
+```js
+const {examplelib,libjsh}=(function(){
+const fs=(function(){
+  // ... fs library
+  return {
+    write: write
+  };
+})();
+return {
+  examplelib:(function(){
+    function hi() {
+      fs.write( 0, 'hi from examplelib' );
+      return 'hi :)';
+    }
+
+    return {
+      hi: hi
+    };
+  })(),
+  libjsh:(function(){
+    function exec( string ) {
+      // ... (example code)
+      const cmd = string.split(' ');
+      if ( cmd[0] === 'echo' ) {
+        fs.write( 0, cmd[1] );
+      }
+    }
+
+    return {
+      exec: exec
+    };
+  })()
+}
+})();
+
+libjsh.exec(`echo ${examplelib.hi()}`);
+
+```
 
 ---
 
