@@ -1,15 +1,6 @@
 import { scheduler } from '/js/kernel/scheduler.js';
+import { moduleLoader } from '/js/kernel/module_loader.js';
 
-/**
- * @param {string} path 
- */
-async function blah(path) {
-    const pid = await scheduler.process_start( path, -1, 0, 0, { 'TERM': 'jterm' }, [] );
-}
+moduleLoader.load('textdrawer');
 
-for (let i = 0; i < 600; i ++) {
-    setTimeout(()=>{blah('/js/lib/programs/test.js'); scheduler.process_queue_allocate()}, i * 5);
-}
-
-scheduler.process_queue_allocate();
-window.scheduler = scheduler;
+setTimeout(() => { moduleLoader.unload('ktext_drawer'); }, 2000)
