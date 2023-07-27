@@ -1,4 +1,4 @@
-const { KModule } = await include( '/js/kernel/module.js' );
+import { KModule } from '/js/kernel/module.js';
 
 class TextDrawerModule extends KModule {
 
