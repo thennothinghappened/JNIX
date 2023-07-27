@@ -1,6 +1,7 @@
-import { KModule } from '/js/kernel/module.js';
+import module from "../module";
 
-class TextDrawerModule extends KModule {
+
+class TextDrawerModule extends module.KModule {
 
     /**
      * Load the module

@@ -9,7 +9,7 @@
  * 
  * Modules extend this class to implement their own functionality.
  */
-export class KModule {
+class KModule {
 
     /**
      * Load the module
@@ -32,3 +32,7 @@ export class KModule {
         throw new Error( 'Not implemented!' );
     }
 }
+
+export default {
+    KModule: KModule
+};

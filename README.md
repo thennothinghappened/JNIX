@@ -5,6 +5,8 @@ _Anyway_, to breifly explain, **JNIX** is my attempt - first and foremost of the
 
 I _**really don't**_ expect to get anywhere with this project, but it's for fun!
 
+The information below is being actively added to and changed, and is pretty much a summary of my current plans or ideas as they develop.
+
 ## Filesystem Approach
 The UNIX filesystem is a very important part of the OS, so here's my plan at the moment of how to implement it.
 
@@ -103,46 +105,55 @@ The important part here, is the Kernel module list. Kernel modules will be refer
 
 Kernel modules are the most dangerous territory in the OS, aside from the Kernel itself! Unhandled errors here *will* crash the entire system - which to an extent is a good thing, in preventing buggy code making it here.
 
-The current approach for implementing Kernel modules will be using [Dynamic Imports](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import). Kernel modules will export two important **asynchronous** functions: `init()`, and `deinit()`. If a module is loaded by the Kernel, it will call `init()`, passing in two methods: `load_module`, and `unload_module`.
+## Compiling and binaries!
+My latest terrible idea in every way: a *compiler*!
 
-`load_module(string)` will return a `Promise`, resolving if the module was loaded to a reference of that module, or rejecting if the module could not be found, or failed to start. `unload_module(string)` will conversely return a `Promise`, resolving whether module has unloaded (the Kernel calls `module.deinit()`).
+### The problem
+Somewhat concerningly late into the start of this project, I've only just found out that `ES Modules` loaded from a `Blob` object url do *not* have the same context to `import` from as ones directly loaded from the web server. This definitely is something that should've been checked out much earlier into the project, but oh well, here we are.
 
-As an example, a theoretical implementation of the `terminal` module may require `display` and `keyboard` loaded, and `compositor` unloaded:
-```ts
-import { IModule, ITerminalModule, IKeyboardModule, IDisplayModule } from '/js/module_defs.mjs';
+Additionally, a goal here includes being able to import libraries dynamically in programs at runtime - of which it becomes *very* messy trying to organise that, and requires extra communication between the process and Kernel... all in all, messy and inefficient.
 
-export default async function init( 
-    load_module: async (string) => Promise<IModule>, 
-    unload_module: async (string) => Promise<boolean>
-): boolean {
-  // If the module fails to unload, we stop loading now.
-  if ( !await unload_module( 'compositor' ) ) {
-    return false;
-  }
+### The (horrible) solution
+In actual metal operating systems, file types do in fact exist, shocking as that is! Anyway, the solution I've come up with involves making use of that - no more bare `.js` files as programs (though, this may still be useful as an alternative scripting language for running in the shell). Instead, executable binaries will be a "compiled" format - using this term loosely.
 
-  let keyboard: IKeyboardModule, display: IDisplayModule;
+Essentially, a linker program will run over JS scripts in search of `import` statements, and depending on whether they are specified as dynamically or statically linked, do one of:
 
-  // Load keyboard and display. If they fail to load, we stop loading.
-  
-  try {
-    keyboard = <IKeyboardModule>(await load_module( 'keyboard' ));
-    display = <IDisplayModule>(await load_module( 'display' ));
-  } catch (e: Error) {
-    return false;
-  }
-
-  keyboard.addEventListener('keypress', (key: string) => {
-    // Handle the keypress...
-  });
-
-  // ...
-
-  // Specify we loaded successfully.
-  return true;
-}
+**If the exectuable is statically linked**, the import statement will be converted to a function closure which should serve the same purpose - the linker will load the associated library and replace it a bit like so:
+```js
+import fs from '/js/lib/fs';
 ```
+Compiles to:
+```js
+const fs = (function(){
+async function open( fname ) {
+  /// ...
+} 
 
-This is a completely unfinalised example and it might change a lot from here. <del>Of note, type definitions do make this harder when interacting with non-builtin modules, and modules which fail to load are also in charge of cleaning up anything they have done so far.</del> No longer planning to use TS for this project.
+async function write( fd ) {
+  /// ...
+}
+
+return {
+  open: open,
+  write: write
+};
+})();
+```
+This does enforce some requirements on libraries. Namely, libraries MUST use `export default`, with an object associating all its exports, rather than the nicer syntax of exporting individual things.
+
+`export default {...}` is picked up on library import and converted to `return {...}`, which completes this very silly solution.
+
+The linking process is recursive, meaning that these libraries will first be linked to their own imports. This does mean its possible to circularly link libraries to eachother, so don't do that! (may ensure this doesn't happen inside the linker)
+
+---
+
+**If the executable is dynamically linked**, the linker will mark the executable as dynamic (*TODO: decide on structure of executables and magic bytes for checking type*). At runtime, the same linking process will occur as shown in the static example.
+
+---
+
+**NOTE:** the `/js` directory is apart of the Virtual Filesystem, and will be handled by a Kernel Module as a wrapper for the webserver's own `/js` directory. To me this seems like an okay solution to standardise the way that libraries are loaded whether they are located locally, or on the web server itself.
+
+There are *absolutely* more robust and efficient ways of doing this, but this solution preserves intellisense
 
 ## Goals
 
