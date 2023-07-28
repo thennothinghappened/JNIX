@@ -223,8 +223,39 @@ return {
 })();
 
 libjsh.exec(`echo ${examplelib.hi()}`);
-
 ```
+
+The linker traverses the imports and creates the graph to figure out which modules need what libraries:
+```
+                     ____________
+                    |            |
+                ____| examplelib |------.
+   ______      |    |____________|   ___|____
+  |      |     |                    |        |
+  | main |-----|                    |   fs   |
+  |______|     |     ____________   |________|
+               |____|            |      |
+                    |   libjsh   |------'
+                    |____________|
+```
+
+With this, it knows that the entry point requires `examplelib` and `libjsh`. Both of these libraries require `fs`, so they are grouped together in the same closure, with `fs` brought in for them. This graph can go on continuously - main can import a library (`A`) which itself imports two libraries (`B` and `C`), while `C` also imports `B`.
+
+This generates the closure structure a bit like:
+```js
+A -> (
+  B -> (
+    return B
+  ),
+  C = (
+    ...using b,
+    return C
+  ),
+  ...using B, C,
+  return A 
+)
+```
+This means that libraries only exist in the order and context needed and wont interfere with eachother.
 
 ---
 
