@@ -3,10 +3,21 @@
  */
 
 /**
+ * @template { any } T
+ * @typedef Message<T> Message sent between Kernel and Threads
+ * @prop { number } identifier
+ * @prop { T } data
+ */
+
+/**
+ * @template { any } T
+ * @typedef { MessageEvent<Message<T>> } ThreadMessageEvent
+ */
+
+/**
  * @typedef KMessage Message sent from the Kernel to a process
  * @prop { Signal } signal Kernel Signal enum value
  * @prop { any } [data] Associated data
- * @prop { number } identifier A unique integer associated with this message. Used as messages may be replied in a different order than sent.
  */
 
 /**
@@ -23,7 +34,6 @@
  * @typedef PMessage Syscall sent by a process to the Kernel
  * @prop { Syscall } syscall Kernel Syscall enum value
  * @prop { any } [data] Associated data
- * @prop { number } identifier A unique integer associated with this message. Used as messages may be replied in a different order than sent.
  */
 
 /**

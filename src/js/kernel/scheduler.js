@@ -1,11 +1,12 @@
 import { Process } from './process.js';
+import { Thread } from './thread.js';
 
 class Scheduler {
 
     static #max_processes = 300;
     static #max_user_processes = 20;
 
-    /** @type { Map<number, Process> } */
+    /** @type { Map<number, Thread> } */
     #process_table = new Map();
     /** @type { { uid: number, resolve: ( pid: number ) => void }[] } */
     #process_start_queue = new Array();
@@ -118,9 +119,9 @@ class Scheduler {
     /**
      * Handler for messages received from a process.
      * @param { Process } process 
-     * @param { MessageEvent<import('../lib/types.js').PMessage> } msg 
+     * @param { import('../lib/types.js').ThreadMessageEvent<import('../lib/types.js').PMessage> } event 
      */
-    #on_process_message = ( process, msg ) => {
+    #on_process_message = ( process, event ) => {
         
     }
 
@@ -139,9 +140,9 @@ class Scheduler {
      * Handler for process syscall errors:
      * Called when a syscall is invalid, or cannot be deserialised.
      * @param { Process } process
-     * @param { MessageEvent<import('../lib/types.js').PMessage?> } msg
+     * @param { import('../lib/types.js').ThreadMessageEvent<import('../lib/types.js').PMessage?> } event
      */
-    #on_process_syscall_error = ( process, msg ) => {
+    #on_process_syscall_error = ( process, event ) => {
 
     }
 
@@ -157,7 +158,7 @@ class Scheduler {
     process_kill = async ( pid ) => {
         const process = this.#process_table.get( pid );
 
-        if ( process === undefined ) {
+        if ( process === undefined || !(process instanceof Process) ) {
             return false;
         }
 
@@ -167,7 +168,7 @@ class Scheduler {
         process.children.forEach( ( pid ) => {
             const process = this.#process_table.get( pid );
             // @ts-ignore
-            process.ppid = 0;
+            process.ppid = 1;
         } );
 
         /* Cleanup goes here later */
@@ -184,6 +185,7 @@ class Scheduler {
      * Add a process to the queue to be started.
      * Once successful, the process' PID will be returned.
      * @param { string } url URL or Blob URL of the code
+     * @param { string } name Name of the process
      * @param { number } ppid Parent Process ID of the process
      * @param { number } uid User ID of the process
      * @param { number } gid Group ID of the process
@@ -191,7 +193,7 @@ class Scheduler {
      * @param { string[] } args Arguments the process was started with
      * @returns { Promise<number> }
      */
-    process_start = async ( url, ppid, uid, gid, env, args ) => {
+    process_start = async ( url, name, ppid, uid, gid, env, args ) => {
 
         /** @type { Promise<number> } */
         const pid = new Promise( ( resolve ) => {
@@ -201,7 +203,7 @@ class Scheduler {
                 resolve: ( pid ) => {
                     // Create the new process with the given PID, add to the table, and return the PID.
                     const process = new Process(
-                        url, ppid, pid, uid, gid, env, args,
+                        url, name, ppid, pid, uid, gid, env, args,
                         this.#on_process_message,
                         this.#on_process_error,
                         this.#on_process_syscall_error

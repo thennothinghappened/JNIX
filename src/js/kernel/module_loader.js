@@ -1,4 +1,4 @@
-import { KModule } from '/js/kernel/module.js';
+
 
 /**
  * Loads and controls Kernel modules.
@@ -17,7 +17,7 @@ class ModuleLoader {
      */
     static #prepend_include = ( module_string ) => {
         return `async function include( url ) {
-            return await import( '${window.location.origin}' + url );
+            return (await import( '${window.location.origin}' + url )).default;
         };${module_string}`;
     }
 

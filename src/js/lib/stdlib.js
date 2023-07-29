@@ -128,7 +128,7 @@ const kmessage_queue = new Map();
 
 /**
  * Handler for onmessage
- * @param { MessageEvent<import('/js/lib/types.js').KMessage> } event 
+ * @param { import('/js/lib/types.js').ThreadMessageEvent<import('/js/lib/types.js').KMessage> } event 
  */
 function on_message_received( event ) {
     const msg = event.data;
@@ -141,7 +141,7 @@ function on_message_received( event ) {
      * immediately in the case of anything that is not used
      * by the end program, such as 
      */
-    switch ( msg.signal ) {
+    switch ( msg.data.signal ) {
 
         case Signal.HEARTBEAT: {
             // Respond immediately to say we're alive
@@ -153,7 +153,7 @@ function on_message_received( event ) {
         }
         
         case Signal.NEWPPID: {
-            ppid = msg.data;
+            ppid = msg.data.data;
             break;
         }
 
@@ -167,7 +167,7 @@ function on_message_received( event ) {
                 throw new Error('stdlib failed to handle a Kernel signal.');
             }
 
-            resolver( msg );
+            resolver( msg.data );
 
             // Remove the entry.
             kmessage_queue.delete( msg.identifier );
