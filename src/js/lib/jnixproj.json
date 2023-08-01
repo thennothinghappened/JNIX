@@ -1,0 +1,8 @@
+{
+    "entryPoint": "compiler.js",
+    "type": "executable",
+    "linkingType": "static",
+    "author": "orca",
+    "version": 1,
+    "description": "The JNIX Compiler!"
+}

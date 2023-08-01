@@ -14,6 +14,7 @@
  * 
  * This *will* be rewritten, but getting an actual OS working takes priority...
  */
+///#noimports
 
 /**
  * @enum { string }
@@ -26,12 +27,27 @@ const JCProjInstruction = {
 /**
  * @typedef JCProj
  * @prop { string } entryPoint Entry point of the program
- * @prop { 'executable'|'library' } type Whether to compile to a final executable, or to create a dynamic library 
+ * @prop { 'static'|'dynamic' } linkingType Whether this is a static or dynamically linked binary
+ * @prop { 'executable'|'library' } type Whether this is an executable binary, or a dynamic library
+ * @prop { string } author Author name
+ * @prop { string } description Program description
+ * @prop { number } version Program version
  * @prop { string } resolutionDir Directory to use to resolve local import paths in the project
  */
 
 /**
  * @typedef { Map<string, { line: number, wants: Set<string> }> } JCImportList
+ */
+
+/**
+ * @typedef JNIXBinary Workable representation of a JNIX binary
+ * @prop { 'static'|'dynamic' } linkingType Whether this is a static or dynamically linked binary
+ * @prop { 'executable'|'library' } type Whether this is an executable binary, or a dynamic library
+ * @prop { string } author Author name
+ * @prop { string } description Program description
+ * @prop { number } version Program version
+ * @prop { 1 } binVersion Version of the binary, starting the count at 1.
+ * @prop { string } code Executable code
  */
 
 /**
@@ -62,7 +78,7 @@ class JCError extends Error {
     }
 }
 
-const test_dir = '/js/lib/test_project/';
+const test_dir = '/js/lib/';
 
 /**
  * Load a file. At the moment we will always assume it to be on the web server.
@@ -70,7 +86,7 @@ const test_dir = '/js/lib/test_project/';
  * @param { string } type File MIME type
  * @returns { Promise<string?> }
  */
-async function load_file( fname, type ) {
+async function example_load_file( fname, type ) {
     const res = await fetch( fname );
 
     if ( !res.ok || res.headers.get( 'content-type' ) !== type ) {
@@ -91,6 +107,17 @@ function check_config( config ) {
         config.type = 'executable';
     }
 
+    config.author = config.author ?? '';
+    config.description = config.description ?? '';
+    
+    if ( !( 'linkingType' in config ) ) {
+        warn( 'Project linking type not specified, defaulting to "static".' );
+        // @ts-ignore
+        config.linkingType = 'static';
+    }
+
+    config.version = config.version ?? 1;
+
     if ( typeof config.entryPoint !== 'string' ) throw new JCError( '"entryPoint" is not of type string' );
     if ( config.type !== 'executable' && config.type !== 'library' ) throw new JCError( '"type" is not of type string' );
 }
@@ -98,9 +125,10 @@ function check_config( config ) {
 /**
  * Load the project config
  * @param { string } dir Project directory
+ * @param { ( fname: string, type: string ) => Promise<string?> } load_file
  * @returns { Promise<JCProj?> }
  */
-async function proj_load_config( dir ) {
+async function proj_load_config( dir, load_file ) {
     const config_text = await load_file( dir + 'jnixproj.json', 'application/json' );
     
     if ( config_text === null ) {
@@ -122,9 +150,11 @@ async function proj_load_config( dir ) {
 /**
  * Entry point to begin compiling a project
  * @param { string } dir 
+ * @param { ( fname: string, type: string ) => Promise<string?> } load_file
+ * @returns { Promise<JNIXBinary> }
  */
-async function proj_compile( dir ) {
-    const config = await proj_load_config( dir );
+export async function proj_compile( dir, load_file ) {
+    const config = await proj_load_config( dir, load_file );
     if ( config === null ) {
         throw new JCError( `Failed to locate project config for project ${ dir }` );
     }
@@ -144,31 +174,38 @@ async function proj_compile( dir ) {
     const order = new Array();
 
     const entry_file = file_parse( config, entry_point_fname, entry_point );
-    await file_get_dependencies( files, config, entry_file, order, new Array() );
+    await file_get_dependencies( files, config, entry_file, order, new Array(), load_file );
 
     /** @type { Array<string> } */
     const out = new Array();
 
     for ( const entry of order.slice( 0, -1 ) ) {
-        console.log(entry);
         /** @type { JCFile } */
         // @ts-ignore
         const file = files.get( entry );
 
         out.push(
-            `const ${ file.importName } = (function() {`,
+            `const ${ file.importName } = await (async function() {`,
             ...file.content,
             `}());`
         );
     }
 
     out.push(
-        `(function() {`,
+        `(async function() {`,
         ...entry_file.content,
         `})();`
     );
 
-    console.log(out.join('\n'));
+    return {
+        author: config.author,
+        description: config.description,
+        version: config.version,
+        linkingType: config.linkingType,
+        binVersion: 1,
+        type: config.type,
+        code: out.join( '\n' ),
+    }
 }
 
 /**
@@ -293,22 +330,39 @@ function file_get_export_lines( config, content ) {
 
         const type = line.shift();
 
-        if ( type === undefined ) {
-            throw new JCError( `Malformed export statement at line ${i}: ${ content[i] }` );
-        }
+        assert( type !== undefined, `Malformed export statement at line ${i}: ${ content[i] }` );
 
         if ( type === 'function' || type === 'const' || type === 'let' ) {
             const name = line.shift();
 
-            if ( name === undefined ) {
-                throw new JCError( `Malformed export statement at line ${i}: ${ content[i] }` );
-            }
+            assert( name !== undefined, `Malformed export statement at line ${i}: ${ content[i] }` );
             
             exports.add( {
                 line: i,
                 name: ( type === 'function' ? name.split('(')[0] : name )
             } );
+
+            continue;
         }
+
+        if ( type === 'async' ) {
+            const kw = line.shift();
+            
+            assert( kw === 'function', `Malformed export statement at line ${i}: ${ content[i] }` );
+            
+            const name = line.shift();
+            
+            assert( name !== undefined, `Malformed export statement at line ${i}: ${ content[i] }` );
+            
+            exports.add( {
+                line: i,
+                name: name.split('(')[0]
+            } );
+
+            continue;
+        }
+
+        throw new JCError( `Malformed export statement at line ${i}: ${ content[i] }` );
 
     }
 
@@ -323,8 +377,9 @@ function file_get_export_lines( config, content ) {
  * @param { JCFile } file 
  * @param { Array<string> } order
  * @param { Array<string> } current_tree
+ * @param { ( fname: string, type: string ) => Promise<string?> } load_file
  */
-async function file_get_dependencies( files, config, file, order, current_tree ) {
+async function file_get_dependencies( files, config, file, order, current_tree, load_file ) {
 
     if ( current_tree.includes( file.name ) ) {
         throw new JCError( `Circular dependency exploring tree ${ current_tree.join( ' -> ' ) } -> ${ file.name }` );
@@ -334,11 +389,11 @@ async function file_get_dependencies( files, config, file, order, current_tree )
     new_tree.push( file.name );
 
     // debug nice list :)
-    console.log( `%c${'|  '.repeat( current_tree.length )}Searching file ${ file.name }`, 'color: gold' );
+    // console.log( `%c${'|  '.repeat( current_tree.length )}Searching file ${ file.name }`, 'color: gold' );
 
     for ( const [ name ] of file.imports ) {
 
-        console.log( `%c${'|  '.repeat( current_tree.length )}|--> %cimport ${ name } ${ files.has( name ) ? '(resolved)' : '' }`, 'color: gold', 'color: lightblue' );
+        // console.log( `%c${'|  '.repeat( current_tree.length )}|--> %cimport ${ name } ${ files.has( name ) ? '(resolved)' : '' }`, 'color: gold', 'color: lightblue' );
 
         if ( files.has( name ) ) {
             const dep = files.get( name );
@@ -356,7 +411,7 @@ async function file_get_dependencies( files, config, file, order, current_tree )
         const dep = file_parse( config, name, dep_string );
         dep.wantedBy.add( file.name );
 
-        await file_get_dependencies( files, config, dep, order, new_tree );
+        await file_get_dependencies( files, config, dep, order, new_tree, load_file );
 
         files.set( name, dep );
     }
@@ -464,4 +519,4 @@ function warn( message ) {
     console.warn( `JNIX Compilation: ${ message }` );
 }
 
-proj_compile( test_dir );
+console.log(await proj_compile( test_dir, example_load_file ));
