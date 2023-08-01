@@ -26,11 +26,15 @@ const JCProjInstruction = {
  */
 
 /**
+ * @typedef { Map<string, { line: number, wants: Array<string> }> } JCImportList
+ */
+
+/**
  * @typedef JCFile
  * @prop { string } name filename
  * @prop { Array<string> } content file content
  * @prop { Array<JCProcInst> } insts preprocessor instructions
- * @prop { Array<JCFile> } imports imports for this file
+ * @prop { JCImportList } imports imports for this file
  */
 
 /**
@@ -74,6 +78,7 @@ async function load_file( fname ) {
 function check_config( config ) {
     if ( !( 'type' in config ) ) {
         warn( 'Project type not specified, defaulting to "executable".' );
+        // @ts-ignore
         config.type = 'executable';
     }
 
@@ -122,7 +127,15 @@ async function proj_compile( dir ) {
         throw new JCError( `Entry point "${ entry_point_fname }" did not exist` );
     }
 
-    file_parse( config, entry_point );
+    /** @type { Map<string, JCFile> } */
+    // List of files we know of currently
+    const files = new Map();
+
+    const entry_file = file_parse( config, entry_point_fname, entry_point );
+    await file_get_dependencies( files, config, entry_file, [] );
+
+    
+
 }
 
 /**
@@ -137,43 +150,108 @@ function file_split( file_string ) {
 /**
  * Parse a given file from a string
  * @param { JCProj } config
+ * @param { string } name
  * @param { string } file_string
+ * @returns { JCFile }
  */
-async function file_parse( config, file_string ) {
+function file_parse( config, name, file_string ) {
 
-    const file = file_split( file_string );
-    const insts = file_preproc_get( file );
-    const import_lines = file_get_import_lines( config, file, insts );
+    const content = file_split( file_string );
+    const insts = file_preproc_get( content );
+    const import_lines = file_get_import_lines( config, content, insts );
+
+    /** @type { JCImportList } */
+    const imports = new Map();
 
     for ( const imp_ind of import_lines ) {
         // parse the line into our import format
-        let imp = file[ imp_ind ].trim();
+        let imp = content[ imp_ind ].trim();
 
         /** @type {string} */
         let checked;
 
+        // check starts with import
         [checked, imp] = str_split_one( imp, ' ' );
-        assert( checked === 'import', `Malformed import ${ file[ imp_ind ] }` );
+        assert( checked === 'import', `Malformed import ${ content[ imp_ind ] }` );
 
+        // check has destructuring
         [checked, imp] = str_split_one( imp, '{' );
-        assert( checked.length === 0, `Malformed import ${ file[ imp_ind ] }` );
+        assert( checked.length === 0, `Malformed import ${ content[ imp_ind ] }` );
 
         [checked, imp] = str_split_one( imp, '}' );
 
+        // get list of wanted
         const wants = checked
             .split( ',' )
             .map( want => want.trim() );
 
         [checked, imp] = str_split_one( imp, 'from ' );
 
+        assert( imp.length > 0, `Malformed import ${ content[ imp_ind ] }` );
+
         [checked, imp] = str_next_char( imp );
 
-        assert( checked === '"' || checked === '\'', `Malformed import ${ file[ imp_ind ] }` );
+        assert( checked === '"' || checked === '\'', `Malformed import ${ content[ imp_ind ] }` );
 
+        // get path to the import
         const [path] = str_split_one( imp, checked );
         
-        console.log(wants, path);
+        imports.set( path, {
+            line: imp_ind,
+            wants
+        } );
     }
+
+    return {
+        name,
+        content,
+        insts,
+        imports
+    };
+}
+
+/**
+ * Get the list of dependencies for a file and load them into the tracked list.
+ * @param { Map<string, JCFile> } files
+ * @param { JCProj } config 
+ * @param { JCFile } file 
+ * @param { Array<string> } ask_tree The tree we went down to get here. Used to prevent circular dependency.
+ */
+async function file_get_dependencies( files, config, file, ask_tree ) {
+
+    for ( const [ name, imp ] of file.imports ) {
+
+        if ( files.has( name ) ) {
+            continue;
+        }
+
+        const dep_string = await load_file( name );
+
+        if ( dep_string === null ) {
+            throw new JCError( `Dependency "${ name }" for file ${ file.name } could not be resolved` );
+        }
+
+        if( ask_tree.includes( name ) ) {
+            throw new JCError( `Circular dependency: found ${ name } as dependency in tree ${ ask_tree.join(' -> ') }` );
+        }
+
+        const dep = file_parse( config, name, dep_string );
+        ask_tree.push( name );
+
+        await file_get_dependencies( files, config, dep, ask_tree );
+
+        files.set( name, dep );
+    }
+
+}
+
+/**
+ * Build the 
+ * @param { JCFile } file 
+ * @param { Map<string, JCFile> } files
+ */
+function dependency_tree_build( file, files ) {
+
 }
 
 /**

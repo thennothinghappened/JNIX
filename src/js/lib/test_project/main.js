@@ -1,4 +1,4 @@
-import { do_stuff } from './testlib.js';
+import { do_stuff } from '/js/lib/test_project/testlib.js';
 import { write } from '/js/lib/fs.js';
 ///#endimports
 
