@@ -116,150 +116,202 @@ Additionally, a goal here includes being able to import libraries dynamically in
 ### The (horrible) solution
 In actual metal operating systems, file types do in fact exist, shocking as that is! Anyway, the solution I've come up with involves making use of that - no more bare `.js` files as programs (though, this may still be useful as an alternative scripting language for running in the shell). Instead, executable binaries will be a "compiled" format - using this term loosely.
 
-Essentially, a linker program will run over JS scripts in search of `import` statements, and depending on whether they are specified as dynamically or statically linked, do one of:
+Essentially, a linker program will run over JS scripts in search of `import` statements...
 
-**If the exectuable is statically linked**, the import statement will be converted to a function closure which should serve the same purpose - the linker will load the associated library and replace it a bit like so:
-```js
-import fs from '/js/lib/fs';
-```
-Compiles to:
-```js
-const fs = (function(){
-async function open( fname ) {
-  /// ...
-} 
+<details>
+  <summary><b>Old Plan</b></summary>
 
-async function write( fd ) {
-  /// ...
-}
+  and depending on whether they are specified as dynamically or statically linked, do one of:
 
-return {
-  open: open,
-  write: write
-};
-})();
-```
-This does enforce some requirements on libraries. Namely, libraries MUST use `export default`, with an object associating all its exports, rather than the nicer syntax of exporting individual things.
+  **If the exectuable is statically linked**, the import statement will be converted to a function closure which should serve the same purpose - the linker will load the associated library and replace it a bit like so:
+  ```js
+  import fs from '/js/lib/fs';
+  ```
+  Compiles to:
+  ```js
+  const fs = (function(){
+  async function open( fname ) {
+    /// ...
+  } 
 
-`export default {...}` is picked up on library import and converted to `return {...}`, which completes this very silly solution.
-
-The linking process will work a bit like a 'baked' version of how modules are resolved in regular ES modules: the linker builds a dependency graph, and uses this to determine the final order that everything should be placed in the file to provide all the needed dependencies. To prevent leaking dependencies into the final scope, it looks like the final solution may involve layers of nested closure whenever dependencies are not `import`ed by the final files.
-
-**For example:**
-
-`main.mjs`:
-```js
-import examplelib from '/usr/lib/examplelib.mjs';
-import libjsh from '/js/lib/libjsh.mjs';
-
-libjsh.exec(`echo ${examplelib.hi()}`);
-```
-
-`examplelib.mjs`:
-```js
-import fs from '/js/lib/fs.mjs';
-
-function hi() {
-  fs.write( 0, 'hi from examplelib' );
-  return 'hi :)';
-}
-
-export default {
-  hi: hi
-};
-```
-
-`libjsh.mjs`:
-```js
-import fs from '/js/lib/fs.mjs';
-
-function exec( string ) {
-  // ... (example code)
-  const cmd = string.split(' ');
-  if ( cmd[0] === 'echo' ) {
-    fs.write( 0, cmd[1] );
+  async function write( fd ) {
+    /// ...
   }
-}
 
-export default {
-  exec: exec
-};
-```
-
-**Compiles to, when statically linked:**
-```js
-const {examplelib,libjsh}=(function(){
-const fs=(function(){
-  // ... fs library
   return {
+    open: open,
     write: write
   };
-})();
-return {
-  examplelib:(function(){
-    function hi() {
-      fs.write( 0, 'hi from examplelib' );
-      return 'hi :)';
-    }
+  })();
+  ```
+  This does enforce some requirements on libraries. Namely, libraries MUST use `export default`, with an object associating all its exports, rather than the nicer syntax of exporting individual things.
 
+  `export default {...}` is picked up on library import and converted to `return {...}`, which completes this very silly solution.
+
+  The linking process will work a bit like a 'baked' version of how modules are resolved in regular ES modules: the linker builds a dependency graph, and uses this to determine the final order that everything should be placed in the file to provide all the needed dependencies. To prevent leaking dependencies into the final scope, it looks like the final solution may involve layers of nested closure whenever dependencies are not `import`ed by the final files.
+
+  **For example:**
+
+  `main.mjs`:
+  ```js
+  import examplelib from '/usr/lib/examplelib.mjs';
+  import libjsh from '/js/lib/libjsh.mjs';
+
+  libjsh.exec(`echo ${examplelib.hi()}`);
+  ```
+
+  `examplelib.mjs`:
+  ```js
+  import fs from '/js/lib/fs.mjs';
+
+  function hi() {
+    fs.write( 0, 'hi from examplelib' );
+    return 'hi :)';
+  }
+
+  export default {
+    hi: hi
+  };
+  ```
+
+  `libjsh.mjs`:
+  ```js
+  import fs from '/js/lib/fs.mjs';
+
+  function exec( string ) {
+    // ... (example code)
+    const cmd = string.split(' ');
+    if ( cmd[0] === 'echo' ) {
+      fs.write( 0, cmd[1] );
+    }
+  }
+
+  export default {
+    exec: exec
+  };
+  ```
+
+  **Compiles to, when statically linked:**
+  ```js
+  const {examplelib,libjsh}=(function(){
+  const fs=(function(){
+    // ... fs library
     return {
-      hi: hi
+      write: write
     };
-  })(),
-  libjsh:(function(){
-    function exec( string ) {
-      // ... (example code)
-      const cmd = string.split(' ');
-      if ( cmd[0] === 'echo' ) {
-        fs.write( 0, cmd[1] );
+  })();
+  return {
+    examplelib:(function(){
+      function hi() {
+        fs.write( 0, 'hi from examplelib' );
+        return 'hi :)';
       }
-    }
 
-    return {
-      exec: exec
+      return {
+        hi: hi
+      };
+    })(),
+    libjsh:(function(){
+      function exec( string ) {
+        // ... (example code)
+        const cmd = string.split(' ');
+        if ( cmd[0] === 'echo' ) {
+          fs.write( 0, cmd[1] );
+        }
+      }
+
+      return {
+        exec: exec
+      };
+    })()
+  }
+  })();
+
+  libjsh.exec(`echo ${examplelib.hi()}`);
+  ```
+
+  The linker traverses the imports and creates the graph to figure out which modules need what libraries:
+  ```
+                      ____________
+                      |            |
+                  ____| examplelib |------.
+    ______      |    |____________|   ___|____
+    |      |     |                    |        |
+    | main |-----|                    |   fs   |
+    |______|     |     ____________   |________|
+                |____|            |      |
+                      |   libjsh   |------'
+                      |____________|
+  ```
+
+  With this, it knows that the entry point requires `examplelib` and `libjsh`. Both of these libraries require `fs`, so they are grouped together in the same closure, with `fs` brought in for them. This graph can go on continuously - main can import a library (`A`) which itself imports two libraries (`B` and `C`), while `C` also imports `B`.
+
+  This generates the closure structure a bit like:
+  ```js
+  A -> (
+    B -> (
+      return B
+    ),
+    C = (
+      ...using b,
+      return C
+    ),
+    ...using B, C,
+    return A 
+  )
+  ```
+  This means that libraries only exist in the order and context needed and wont interfere with eachother.
+
+  ---
+
+  **If the executable is dynamically linked**, the linker will mark the executable as dynamic (*TODO: decide on structure of executables and magic bytes for checking type*). At runtime, the same linking process will occur as shown in the static example.
+
+  ---
+
+</details>
+
+<details>
+  <summary><b>Current Implementation</b></summary>
+  
+  The original plan - which is outlined above - was pretty complicated, and while it would've been nice, it is a lot more that what's needed to get the job done.
+
+  This branch has a **working** implementation of a more conventional system!
+
+  Essentially, the import tree is built and traversed as normal, and the order in which dependencies are added to the file is chosen, while also allocating them names which won't interfere with any of the scripts.
+
+  This solution does have some benefits, namely the shift from `export default`, which is no longer used at all - functions, variables, whatever, may be exported as-is by adding `export` in front.
+
+  The compiler is *not* robust at all, and is the product of a couple hours of work by someone who's never tried anything like this before. It has many limitations and is easy to break, and requires putting in preprocessor instructions to use (this may be easy to remove later, but on the basis of 'it works, we can rewrite later!', I'm leaving it as is.)
+
+  The usage requires creating a `jnixproj.json` config file, which specifies info about the program, whether it is statically or dynamically linked (to be implemented), versioning, etc, and entry point.
+
+  The compiler (well, moreso a linker) begins at the entry point, and works its way down the tree, parsing import statements and figuring out the order required to satisfy the needs of all nested dependencies, and finally puts it all together as a series of closures representing each file's contents, where the closure ends with a `return` statement containing all exports, allowing for the same destructured importing as normal!
+
+  This is the static implementation, so doesn't account for dynamic loading! This is something I'll have to address soon, but at the moment, this works. The plan there is likely just to leave stub preprocessor instructions where imports should be, which it at runtime will do its same resolution process for :)
+
+  **Example**:
+  ```js
+  // Any line beginning with "///#" is a preprocessor instruction.
+  // The syntax here (which I'm making up as I go!) is the symbol
+  // name, which is the variable name its expected to be accessed
+  // by, and the path to the file. This may be redundant since
+  // the name can always be worked out by the path.
+
+  ///#import $$__js_lib_stdlib_js_$$ /js/lib/stdlib.js
+
+  (async function() {
+    // this line is transformed
+    const { say_hi, say_bye } = $$__js_lib_stdlib_js_$$;
+
+    say_hi();
+    say_bye();
+
+    ; return {
+
     };
-  })()
-}
-})();
-
-libjsh.exec(`echo ${examplelib.hi()}`);
-```
-
-The linker traverses the imports and creates the graph to figure out which modules need what libraries:
-```
-                     ____________
-                    |            |
-                ____| examplelib |------.
-   ______      |    |____________|   ___|____
-  |      |     |                    |        |
-  | main |-----|                    |   fs   |
-  |______|     |     ____________   |________|
-               |____|            |      |
-                    |   libjsh   |------'
-                    |____________|
-```
-
-With this, it knows that the entry point requires `examplelib` and `libjsh`. Both of these libraries require `fs`, so they are grouped together in the same closure, with `fs` brought in for them. This graph can go on continuously - main can import a library (`A`) which itself imports two libraries (`B` and `C`), while `C` also imports `B`.
-
-This generates the closure structure a bit like:
-```js
-A -> (
-  B -> (
-    return B
-  ),
-  C = (
-    ...using b,
-    return C
-  ),
-  ...using B, C,
-  return A 
-)
-```
-This means that libraries only exist in the order and context needed and wont interfere with eachother.
-
----
-
-**If the executable is dynamically linked**, the linker will mark the executable as dynamic (*TODO: decide on structure of executables and magic bytes for checking type*). At runtime, the same linking process will occur as shown in the static example.
+  })();
+  ```
+</details>
 
 ---
 

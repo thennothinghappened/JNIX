@@ -78,8 +78,6 @@ class JCError extends Error {
     }
 }
 
-const test_dir = '/js/lib/';
-
 /**
  * Load a file. At the moment we will always assume it to be on the web server.
  * @param { string } fname Filename
@@ -519,4 +517,4 @@ function warn( message ) {
     console.warn( `JNIX Compilation: ${ message }` );
 }
 
-console.log(await proj_compile( test_dir, example_load_file ));
+window.blah = await proj_compile( '/js/lib/test_project/', example_load_file );
