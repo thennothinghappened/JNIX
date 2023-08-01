@@ -2,6 +2,8 @@
     "compilerOptions": {
         "checkJs": true,
         "strict": true,
+        "module": "ESNext",
+        "target": "ESNext",
         "lib": [
             "WebWorker",
             "ESNext"
