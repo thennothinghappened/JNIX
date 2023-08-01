@@ -81,13 +81,19 @@ class JCError extends Error {
 /**
  * Load a file. At the moment we will always assume it to be on the web server.
  * @param { string } fname Filename
- * @param { string } type File MIME type
  * @returns { Promise<string?> }
  */
-async function example_load_file( fname, type ) {
+async function example_load_file( fname ) {
     const res = await fetch( fname );
 
-    if ( !res.ok || res.headers.get( 'content-type' ) !== type ) {
+    if ( !res.ok ) {
+        return null;
+    }
+
+    if (
+        res.headers.get( 'content-type' ) !== 'application/json' &&
+        res.headers.get( 'content-type' ) !== 'application/javascript'
+    ) {
         return null;
     }
 
@@ -123,11 +129,11 @@ function check_config( config ) {
 /**
  * Load the project config
  * @param { string } dir Project directory
- * @param { ( fname: string, type: string ) => Promise<string?> } load_file
+ * @param { ( fname: string ) => Promise<string?> } load_file
  * @returns { Promise<JCProj?> }
  */
 async function proj_load_config( dir, load_file ) {
-    const config_text = await load_file( dir + 'jnixproj.json', 'application/json' );
+    const config_text = await load_file( dir + 'jnixproj.json' );
     
     if ( config_text === null ) {
         return null;
@@ -148,7 +154,7 @@ async function proj_load_config( dir, load_file ) {
 /**
  * Entry point to begin compiling a project
  * @param { string } dir 
- * @param { ( fname: string, type: string ) => Promise<string?> } load_file
+ * @param { ( fname: string ) => Promise<string?> } load_file
  * @returns { Promise<JNIXBinary> }
  */
 export async function proj_compile( dir, load_file ) {
@@ -158,7 +164,7 @@ export async function proj_compile( dir, load_file ) {
     }
 
     const entry_point_fname = config.resolutionDir + config.entryPoint;
-    const entry_point = await load_file( entry_point_fname, 'application/javascript' );
+    const entry_point = await load_file( entry_point_fname );
     
     if ( entry_point === null ) {
         throw new JCError( `Entry point "${ entry_point_fname }" did not exist` );
@@ -334,9 +340,10 @@ function file_get_export_lines( config, content ) {
             const name = line.shift();
 
             assert( name !== undefined, `Malformed export statement at line ${i}: ${ content[i] }` );
-            
+
             exports.add( {
                 line: i,
+                // @ts-ignore
                 name: ( type === 'function' ? name.split('(')[0] : name )
             } );
 
@@ -354,6 +361,7 @@ function file_get_export_lines( config, content ) {
             
             exports.add( {
                 line: i,
+                // @ts-ignore
                 name: name.split('(')[0]
             } );
 
@@ -375,7 +383,7 @@ function file_get_export_lines( config, content ) {
  * @param { JCFile } file 
  * @param { Array<string> } order
  * @param { Array<string> } current_tree
- * @param { ( fname: string, type: string ) => Promise<string?> } load_file
+ * @param { ( fname: string ) => Promise<string?> } load_file
  */
 async function file_get_dependencies( files, config, file, order, current_tree, load_file ) {
 
@@ -400,7 +408,7 @@ async function file_get_dependencies( files, config, file, order, current_tree, 
             continue;
         }
 
-        const dep_string = await load_file( name, 'application/javascript' );
+        const dep_string = await load_file( name );
 
         if ( dep_string === null ) {
             throw new JCError( `Dependency "${ name }" for file ${ file.name } could not be resolved` );
