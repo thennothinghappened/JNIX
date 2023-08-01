@@ -32,10 +32,12 @@ const JCProjInstruction = {
 /**
  * @typedef JCFile
  * @prop { string } name filename
+ * @prop { string } importName Name used when importing this
  * @prop { Array<string> } content file content
  * @prop { Array<JCProcInst> } insts preprocessor instructions
  * @prop { JCImportList } imports imports for this file
  * @prop { Set<string> } wantedBy which other files want this file
+ * @prop { Set<string> } exports List of exports from this file
  */
 
 /**
@@ -139,7 +141,29 @@ async function proj_compile( dir ) {
     const entry_file = file_parse( config, entry_point_fname, entry_point );
     await file_get_dependencies( files, config, entry_file, order, new Array() );
 
-    console.log(order);
+    /** @type { Array<string> } */
+    const out = new Array();
+
+    for ( const entry of order.slice( 0, -1 ) ) {
+        console.log(entry);
+        /** @type { JCFile } */
+        // @ts-ignore
+        const file = files.get( entry );
+
+        out.push(
+            `const ${ file.importName } = (function() {`,
+            ...file.content,
+            `}());`
+        );
+    }
+
+    out.push(
+        `(function() {`,
+        ...entry_file.content,
+        `})();`
+    );
+
+    console.log(out.join('\n'));
 }
 
 /**
@@ -163,44 +187,16 @@ function file_parse( config, name, file_string ) {
     const content = file_split( file_string );
     const insts = file_preproc_get( content );
     const import_lines = file_get_import_lines( config, content, insts );
+    const export_lines = file_get_export_lines( config, content );
 
     /** @type { JCImportList } */
     const imports = new Map();
 
     for ( const imp_ind of import_lines ) {
         // parse the line into our import format
-        let imp = content[ imp_ind ].trim();
+        const { wants, path } = file_get_import( content[ imp_ind ].trim() );
 
-        /** @type {string} */
-        let checked;
-
-        // check starts with import
-        [checked, imp] = str_split_one( imp, ' ' );
-        assert( checked === 'import', `Malformed import ${ content[ imp_ind ] }` );
-
-        // check has destructuring
-        [checked, imp] = str_split_one( imp, '{' );
-        assert( checked.length === 0, `Malformed import ${ content[ imp_ind ] }` );
-
-        [checked, imp] = str_split_one( imp, '}' );
-
-        // get list of wanted
-        const wants = new Set(
-            checked
-                .split( ',' )
-                .map( want => want.trim() ))
-        ;
-
-        [checked, imp] = str_split_one( imp, 'from ' );
-
-        assert( imp.length > 0, `Malformed import ${ content[ imp_ind ] }` );
-
-        [checked, imp] = str_next_char( imp );
-
-        assert( checked === '"' || checked === '\'', `Malformed import ${ content[ imp_ind ] }` );
-
-        // get path to the import
-        const [path] = str_split_one( imp, checked );
+        content[ imp_ind ] = `const { ${ Array.from( wants ).join(', ') } } = $$_${ path.replace( /[\.|\/]/g, '_' ) }_$$;`;
         
         imports.set( path, {
             line: imp_ind,
@@ -208,13 +204,111 @@ function file_parse( config, name, file_string ) {
         } );
     }
 
+    /** @type { Set<string> } */
+    const exports = new Set();
+
+    content.push(`;return {`);
+
+    for ( const { line, name } of export_lines ) {
+        exports.add( name );
+
+        content[line] = content[line].replace( 'export ', '' );
+        content.push( `    ${name},` );
+    }
+
+    content.push( '};' );
+
     return {
         name,
+        importName: `$$_${name.replace( /[\.|\/]/g, '_' )}_$$`,
         content,
         insts,
         imports,
+        exports,
         wantedBy: new Set()
     };
+}
+
+/**
+ * @param { string } import_line
+ */
+function file_get_import( import_line ) {
+    /** @type {string} */
+    let checked, imp = import_line;
+
+    // check starts with import
+    [checked, imp] = str_split_one( imp, ' ' );
+    assert( checked === 'import', `Malformed import ${ import_line }` );
+
+    // check has destructuring
+    [checked, imp] = str_split_one( imp, '{' );
+    assert( checked.length === 0, `Malformed import ${ import_line }` );
+
+    [checked, imp] = str_split_one( imp, '}' );
+
+    // get list of wanted
+    const wants = new Set(
+        checked
+            .split( ',' )
+            .map( want => want.trim() ))
+    ;
+
+    [checked, imp] = str_split_one( imp, 'from ' );
+
+    assert( imp.length > 0, `Malformed import ${ import_line }` );
+
+    [checked, imp] = str_next_char( imp );
+
+    assert( checked === '"' || checked === '\'', `Malformed import ${ import_line }` );
+
+    // get path to the import
+    const [path] = str_split_one( imp, checked );
+
+    return {
+        wants, path
+    };
+}
+
+/**
+ * @param { JCProj } config
+ * @param { Array<string> } content
+ * @returns { Set<{ line: number, name: string }> }
+ */
+function file_get_export_lines( config, content ) {
+    
+    /** @type { Set<{ line: number, name: string }> } */
+    const exports = new Set();
+
+    for ( let i = 0; i < content.length; i ++ ) {
+        const line = content[i].trim().split( ' ' );
+
+        if ( line.shift() !== 'export' ) {
+            continue;
+        }
+
+        const type = line.shift();
+
+        if ( type === undefined ) {
+            throw new JCError( `Malformed export statement at line ${i}: ${ content[i] }` );
+        }
+
+        if ( type === 'function' || type === 'const' || type === 'let' ) {
+            const name = line.shift();
+
+            if ( name === undefined ) {
+                throw new JCError( `Malformed export statement at line ${i}: ${ content[i] }` );
+            }
+            
+            exports.add( {
+                line: i,
+                name: ( type === 'function' ? name.split('(')[0] : name )
+            } );
+        }
+
+    }
+
+    return exports;
+
 }
 
 /**
@@ -263,15 +357,6 @@ async function file_get_dependencies( files, config, file, order, current_tree )
     }
 
     order.push( file.name );
-
-}
-
-/**
- * Build the 
- * @param { JCFile } file 
- * @param { Map<string, JCFile> } files
- */
-function dependency_tree_build( file, files ) {
 
 }
 
