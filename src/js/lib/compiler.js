@@ -26,7 +26,7 @@ const JCProjInstruction = {
  */
 
 /**
- * @typedef { Map<string, { line: number, wants: Array<string> }> } JCImportList
+ * @typedef { Map<string, { line: number, wants: Set<string> }> } JCImportList
  */
 
 /**
@@ -35,6 +35,7 @@ const JCProjInstruction = {
  * @prop { Array<string> } content file content
  * @prop { Array<JCProcInst> } insts preprocessor instructions
  * @prop { JCImportList } imports imports for this file
+ * @prop { Set<string> } wantedBy which other files want this file
  */
 
 /**
@@ -58,13 +59,14 @@ const test_dir = '/js/lib/test_project/';
 
 /**
  * Load a file. At the moment we will always assume it to be on the web server.
- * @param {string} fname Filename
+ * @param { string } fname Filename
+ * @param { string } type File MIME type
  * @returns { Promise<string?> }
  */
-async function load_file( fname ) {
+async function load_file( fname, type ) {
     const res = await fetch( fname );
 
-    if ( !res.ok ) {
+    if ( !res.ok || res.headers.get( 'content-type' ) !== type ) {
         return null;
     }
 
@@ -92,7 +94,7 @@ function check_config( config ) {
  * @returns { Promise<JCProj?> }
  */
 async function proj_load_config( dir ) {
-    const config_text = await load_file( dir + 'jnixproj.json' );
+    const config_text = await load_file( dir + 'jnixproj.json', 'application/json' );
     
     if ( config_text === null ) {
         return null;
@@ -121,7 +123,7 @@ async function proj_compile( dir ) {
     }
 
     const entry_point_fname = config.resolutionDir + config.entryPoint;
-    const entry_point = await load_file( entry_point_fname );
+    const entry_point = await load_file( entry_point_fname, 'application/javascript' );
     
     if ( entry_point === null ) {
         throw new JCError( `Entry point "${ entry_point_fname }" did not exist` );
@@ -130,12 +132,14 @@ async function proj_compile( dir ) {
     /** @type { Map<string, JCFile> } */
     // List of files we know of currently
     const files = new Map();
+    /** @type { Array<string> } */
+    // Order of our dependencies to exist in the final file
+    const order = new Array();
 
     const entry_file = file_parse( config, entry_point_fname, entry_point );
-    await file_get_dependencies( files, config, entry_file, [] );
+    await file_get_dependencies( files, config, entry_file, order, new Array() );
 
-    
-
+    console.log(order);
 }
 
 /**
@@ -181,9 +185,11 @@ function file_parse( config, name, file_string ) {
         [checked, imp] = str_split_one( imp, '}' );
 
         // get list of wanted
-        const wants = checked
-            .split( ',' )
-            .map( want => want.trim() );
+        const wants = new Set(
+            checked
+                .split( ',' )
+                .map( want => want.trim() ))
+        ;
 
         [checked, imp] = str_split_one( imp, 'from ' );
 
@@ -206,7 +212,8 @@ function file_parse( config, name, file_string ) {
         name,
         content,
         insts,
-        imports
+        imports,
+        wantedBy: new Set()
     };
 }
 
@@ -215,33 +222,47 @@ function file_parse( config, name, file_string ) {
  * @param { Map<string, JCFile> } files
  * @param { JCProj } config 
  * @param { JCFile } file 
- * @param { Array<string> } ask_tree The tree we went down to get here. Used to prevent circular dependency.
+ * @param { Array<string> } order
+ * @param { Array<string> } current_tree
  */
-async function file_get_dependencies( files, config, file, ask_tree ) {
+async function file_get_dependencies( files, config, file, order, current_tree ) {
 
-    for ( const [ name, imp ] of file.imports ) {
+    if ( current_tree.includes( file.name ) ) {
+        throw new JCError( `Circular dependency exploring tree ${ current_tree.join( ' -> ' ) } -> ${ file.name }` );
+    }
+
+    const new_tree = current_tree.slice(0);
+    new_tree.push( file.name );
+
+    // debug nice list :)
+    console.log( `%c${'|  '.repeat( current_tree.length )}Searching file ${ file.name }`, 'color: gold' );
+
+    for ( const [ name ] of file.imports ) {
+
+        console.log( `%c${'|  '.repeat( current_tree.length )}|--> %cimport ${ name } ${ files.has( name ) ? '(resolved)' : '' }`, 'color: gold', 'color: lightblue' );
 
         if ( files.has( name ) ) {
+            const dep = files.get( name );
+            dep?.wantedBy.add( file.name );
+
             continue;
         }
 
-        const dep_string = await load_file( name );
+        const dep_string = await load_file( name, 'application/javascript' );
 
         if ( dep_string === null ) {
             throw new JCError( `Dependency "${ name }" for file ${ file.name } could not be resolved` );
         }
 
-        if( ask_tree.includes( name ) ) {
-            throw new JCError( `Circular dependency: found ${ name } as dependency in tree ${ ask_tree.join(' -> ') }` );
-        }
-
         const dep = file_parse( config, name, dep_string );
-        ask_tree.push( name );
+        dep.wantedBy.add( file.name );
 
-        await file_get_dependencies( files, config, dep, ask_tree );
+        await file_get_dependencies( files, config, dep, order, new_tree );
 
         files.set( name, dep );
     }
+
+    order.push( file.name );
 
 }
 
