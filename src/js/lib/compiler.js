@@ -525,4 +525,4 @@ function warn( message ) {
     console.warn( `JNIX Compilation: ${ message }` );
 }
 
-window.blah = await proj_compile( '/js/lib/test_project/', example_load_file );
+window.blah = await proj_compile( '/js/lib/', example_load_file );
