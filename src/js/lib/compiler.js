@@ -8,6 +8,11 @@
  * The compiler for now is *really* dumb, and you have to
  * tell it about everything manually. Later on, hopefully
  * I can get something better going.
+ * 
+ * The compiler will also have a whole lot of false positives if you dare
+ * start a string with "export " on a new line, as it splits everything by new lines!
+ * 
+ * This *will* be rewritten, but getting an actual OS working takes priority...
  */
 
 /**
