@@ -22,17 +22,20 @@
 const JCProjInstruction = {
     endImports: 'endimports',
     noImports: 'noimports',
+    dynamicImport: 'dynimport'
 };
 
 /**
- * @typedef JCProj
+ * @template { 'static'|'dynamic' } LINK
+ * @typedef JCProj<LINK>
  * @prop { string } entryPoint Entry point of the program
- * @prop { 'static'|'dynamic' } linkingType Whether this is a static or dynamically linked binary
+ * @prop { LINK } linkingType Whether this is a static or dynamically linked binary
  * @prop { 'executable'|'library' } type Whether this is an executable binary, or a dynamic library
  * @prop { string } author Author name
  * @prop { string } description Program description
  * @prop { number } version Program version
  * @prop { string } resolutionDir Directory to use to resolve local import paths in the project
+ * @prop { Array<string> } dynamicLink List of libraries to be linked dynamically
  */
 
 /**
@@ -40,8 +43,9 @@ const JCProjInstruction = {
  */
 
 /**
- * @typedef JNIXBinary Workable representation of a JNIX binary
- * @prop { 'static'|'dynamic' } linkingType Whether this is a static or dynamically linked binary
+ * @template { 'static'|'dynamic' } LINK
+ * @typedef JNIXBinary<LINK> Workable representation of a JNIX binary
+ * @prop { LINK } linkingType Whether this is a static or dynamically linked binary
  * @prop { 'executable'|'library' } type Whether this is an executable binary, or a dynamic library
  * @prop { string } author Author name
  * @prop { string } description Program description
@@ -57,14 +61,13 @@ const JCProjInstruction = {
  * @prop { Array<string> } content file content
  * @prop { Array<JCProcInst> } insts preprocessor instructions
  * @prop { JCImportList } imports imports for this file
- * @prop { Set<string> } wantedBy which other files want this file
  * @prop { Set<string> } exports List of exports from this file
  */
 
 /**
  * @typedef JCProcInst
  * @prop { JCProjInstruction } name
- * @prop { Array<string> } params
+ * @prop { string } params
  * @prop { number } line
  */
 
@@ -102,7 +105,7 @@ async function example_load_file( fname ) {
 
 /**
  * Check JNIX project config is valid.
- * @param { JCProj } config
+ * @param { JCProj<'static'|'dynamic'> } config
  */
 function check_config( config ) {
     if ( !( 'type' in config ) ) {
@@ -120,6 +123,10 @@ function check_config( config ) {
         config.linkingType = 'static';
     }
 
+    if ( config.linkingType === 'dynamic' ) {
+        assert( Array.isArray( config.dynamicLink ), 'Project config "dynamicLink" invalid or missing for dynamically linked project.' );
+    }
+
     config.version = config.version ?? 1;
 
     if ( typeof config.entryPoint !== 'string' ) throw new JCError( '"entryPoint" is not of type string' );
@@ -130,7 +137,7 @@ function check_config( config ) {
  * Load the project config
  * @param { string } dir Project directory
  * @param { ( fname: string ) => Promise<string?> } load_file
- * @returns { Promise<JCProj?> }
+ * @returns { Promise<JCProj<'static'|'dynamic'>?> }
  */
 async function proj_load_config( dir, load_file ) {
     const config_text = await load_file( dir + 'jnixproj.json' );
@@ -155,13 +162,25 @@ async function proj_load_config( dir, load_file ) {
  * Entry point to begin compiling a project
  * @param { string } dir 
  * @param { ( fname: string ) => Promise<string?> } load_file
- * @returns { Promise<JNIXBinary> }
+ * @returns { Promise<JNIXBinary<'static'|'dynamic'>> }
  */
 export async function proj_compile( dir, load_file ) {
     const config = await proj_load_config( dir, load_file );
     if ( config === null ) {
         throw new JCError( `Failed to locate project config for project ${ dir }` );
     }
+
+    return await compile( config, load_file );
+}
+
+/**
+ * @template { 'static'|'dynamic' } TYPE
+ * Compile a given project from a config.
+ * @param { JCProj<TYPE> } config 
+ * @param { ( fname: string ) => Promise<string?> } load_file Implementation for loading a file given a path
+ * @returns { Promise<JNIXBinary<TYPE>> }
+ */
+export async function compile( config, load_file ) {
 
     const entry_point_fname = config.resolutionDir + config.entryPoint;
     const entry_point = await load_file( entry_point_fname );
@@ -177,29 +196,12 @@ export async function proj_compile( dir, load_file ) {
     // Order of our dependencies to exist in the final file
     const order = new Array();
 
-    const entry_file = file_parse( config, entry_point_fname, entry_point );
+    const entry_file = file_parse( entry_point_fname, entry_point );
     await file_get_dependencies( files, config, entry_file, order, new Array(), load_file );
+    
+    files.set( entry_file.name, entry_file );
 
-    /** @type { Array<string> } */
-    const out = new Array();
-
-    for ( const entry of order.slice( 0, -1 ) ) {
-        /** @type { JCFile } */
-        // @ts-ignore
-        const file = files.get( entry );
-
-        out.push(
-            `const ${ file.importName } = await (async function() {`,
-            ...file.content,
-            `}());`
-        );
-    }
-
-    out.push(
-        `(async function() {`,
-        ...entry_file.content,
-        `})();`
-    );
+    const out = pack_output_code( config, files, order );
 
     return {
         author: config.author,
@@ -210,6 +212,105 @@ export async function proj_compile( dir, load_file ) {
         type: config.type,
         code: out.join( '\n' ),
     }
+
+}
+
+/**
+ * Link a dynamic file to a final static one for execution
+ * @param { JNIXBinary<'dynamic'> } file
+ * @param { ( fname: string ) => Promise<string?> } load_file Implementation for loading a file given a path
+ * @returns { Promise<JNIXBinary<'static'>> }
+ */
+export async function link( file, load_file ) {
+
+    const content = file.code.split('\n');
+    const insts = file_preproc_get( content );
+
+    // Since we're inserting lines, we need to know how much the offset changes each time we insert something.
+    let offset = 0;
+    let prev_line = 0;
+    
+    for ( const { line, params } of insts.filter( inst => inst.name === JCProjInstruction.dynamicImport ) ) {
+        const imp = await load_file( params );
+        
+        if ( imp === null ) {
+            throw new JCError( `Failed linking "${ JSON.stringify(file) }":\n\nDynamic lib "${ params }" failed to resolve.` );
+        }
+
+        offset += line - prev_line;
+        prev_line = line;
+
+        const imp_file = file_parse( params, imp );
+        const lines = pack_dependency( imp_file );
+
+        content.splice( offset, 1, ...lines );
+
+        offset += lines.length - 1;
+    }
+
+    return {
+        author: file.author,
+        description: file.description,
+        version: file.version,
+        binVersion: 1,
+        linkingType: 'static',
+        type: file.type,
+        code: content.join( '\n' )
+    };
+
+}
+
+/**
+ * Pack together the output into the final single code section.
+ * @param { JCProj<'static'|'dynamic'> } config
+ * @param { Map<string, JCFile> } files
+ * @param { Array<string> } order
+ * @returns { Array<string> }
+ */
+function pack_output_code( config, files, order ) {
+    /** @type { Array<string> } */
+    const out = new Array();
+
+    for ( const entry of order.slice( 0, -1 ) ) {
+        /** @type { JCFile } */
+        // @ts-ignore
+        const file = files.get( entry );
+        out.push( ...pack_dependency( file, config.dynamicLink ) );
+        
+    }
+
+    out.push(
+        `(async function() {`,
+        // @ts-ignore
+        ...files.get( order.pop() ).content,
+        `})();`
+    );
+
+    return out;
+}
+
+/**
+ * Pack a dependency into the final output
+ * @param { JCFile } file
+ * @param { Array<string> } [dynamicLinks]
+ * @returns { Array<string> }
+ */
+function pack_dependency( file, dynamicLinks ) {
+
+    if ( dynamicLinks?.includes( file.name ) ) {
+        // Dynamic linking works by introducing dynamicImport preprocessor instructions where the
+        // symbols should be introduced. In the final sweep in interpretation, the dependencies will
+        // be resolved.
+        return [
+            `///#${ JCProjInstruction.dynamicImport } ${ file.name }`
+        ];
+    }
+
+    return [
+        `const ${ file.importName } = await (async function() {`,
+        ...file.content,
+        `}());`
+    ];
 }
 
 /**
@@ -223,17 +324,16 @@ function file_split( file_string ) {
 
 /**
  * Parse a given file from a string
- * @param { JCProj } config
  * @param { string } name
  * @param { string } file_string
  * @returns { JCFile }
  */
-function file_parse( config, name, file_string ) {
+function file_parse( name, file_string ) {
 
     const content = file_split( file_string );
     const insts = file_preproc_get( content );
-    const import_lines = file_get_import_lines( config, content, insts );
-    const export_lines = file_get_export_lines( config, content );
+    const import_lines = file_get_import_lines( content, insts );
+    const export_lines = file_get_export_lines( content );
 
     /** @type { JCImportList } */
     const imports = new Map();
@@ -270,8 +370,7 @@ function file_parse( config, name, file_string ) {
         content,
         insts,
         imports,
-        exports,
-        wantedBy: new Set()
+        exports
     };
 }
 
@@ -316,11 +415,10 @@ function file_get_import( import_line ) {
 }
 
 /**
- * @param { JCProj } config
  * @param { Array<string> } content
  * @returns { Set<{ line: number, name: string }> }
  */
-function file_get_export_lines( config, content ) {
+function file_get_export_lines( content ) {
     
     /** @type { Set<{ line: number, name: string }> } */
     const exports = new Set();
@@ -379,7 +477,7 @@ function file_get_export_lines( config, content ) {
 /**
  * Get the list of dependencies for a file and load them into the tracked list.
  * @param { Map<string, JCFile> } files
- * @param { JCProj } config 
+ * @param { JCProj<'static'|'dynamic'> } config 
  * @param { JCFile } file 
  * @param { Array<string> } order
  * @param { Array<string> } current_tree
@@ -402,9 +500,6 @@ async function file_get_dependencies( files, config, file, order, current_tree, 
         // console.log( `%c${'|  '.repeat( current_tree.length )}|--> %cimport ${ name } ${ files.has( name ) ? '(resolved)' : '' }`, 'color: gold', 'color: lightblue' );
 
         if ( files.has( name ) ) {
-            const dep = files.get( name );
-            dep?.wantedBy.add( file.name );
-
             continue;
         }
 
@@ -414,8 +509,7 @@ async function file_get_dependencies( files, config, file, order, current_tree, 
             throw new JCError( `Dependency "${ name }" for file ${ file.name } could not be resolved` );
         }
 
-        const dep = file_parse( config, name, dep_string );
-        dep.wantedBy.add( file.name );
+        const dep = file_parse( name, dep_string );
 
         await file_get_dependencies( files, config, dep, order, new_tree, load_file );
 
@@ -479,26 +573,29 @@ function file_preproc_get( file ) {
 
     file.forEach( ( line, index ) => {
         if ( line.startsWith( '///#' ) ) {
-            const data = line.slice( 4 ).split( ' ' );
+            const [name, params] = str_split_one( line.slice( 4 ), ' ' );
             insts.push( {
-                name: data[0],
+                name,
                 line: index,
-                params: data.slice(1)
+                params: params.trim()
             } );
+
+            // file[ index ] = '';
         }
     } );
+
+    console.log(insts);
 
     return insts;
 }
 
 /**
  * Get the list of lines imports appear in the file
- * @param { JCProj } config
  * @param { Array<string> } file
  * @param { Array<JCProcInst> } insts
  * @returns { Array<number> }
  */
-function file_get_import_lines( config, file, insts ) {
+function file_get_import_lines( file, insts ) {
     if ( insts.find( ( inst ) => inst.name === JCProjInstruction.noImports ) ) {
         return new Array();
     }
@@ -525,4 +622,9 @@ function warn( message ) {
     console.warn( `JNIX Compilation: ${ message }` );
 }
 
-window.blah = await proj_compile( '/js/lib/', example_load_file );
+window.compiler = {
+    proj_compile,
+    compile,
+    link,
+    example_load_file
+};

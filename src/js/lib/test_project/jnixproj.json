@@ -1,5 +1,10 @@
 {
     "entryPoint": "main.js",
     "type": "executable",
-    "linkingType": "static"
+    "linkingType": "dynamic",
+    "dynamicLink": [
+        "/js/lib/stdlib.js",
+        "/js/lib/test_project/testlib.js",
+        "/js/lib/fs.js"
+    ]
 }
