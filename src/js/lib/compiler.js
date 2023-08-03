@@ -280,13 +280,25 @@ function pack_output_code( config, files, order ) {
     }
 
     out.push(
-        `(async function() {`,
+        `return (async function() {`,
         // @ts-ignore
         ...files.get( order.pop() ).content,
         `})();`
     );
 
-    return out;
+    if ( config.type === 'executable' ) {
+        return out;
+    }
+
+    if ( config.type === 'library' ) {
+        out.unshift( '(async function() {' );
+        out.push( '})();' );
+
+        return out;
+    }
+
+    throw new JCError( `Output packing: Unrecognised output type ${ config.type }` );
+    
 }
 
 /**
@@ -583,8 +595,6 @@ function file_preproc_get( file ) {
             // file[ index ] = '';
         }
     } );
-
-    console.log(insts);
 
     return insts;
 }
