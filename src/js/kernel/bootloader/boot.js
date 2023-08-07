@@ -1,32 +1,33 @@
-import { storage_get, storage_set } from '/js/kernel/bootloader/storage.js';
 import { proj_compile, webserver_load_file, create_data_url } from '/js/lib/compiler.js';
 
-
-let compile_mode = storage_get( 'compile_mode' );
+let compile_mode = localStorage.getItem( 'compile_mode' );
 
 if ( compile_mode === null ) {
-    compile_mode = storage_set( 'compile_mode', 'source' );
+    compile_mode = 'source';
+    localStorage.setItem( 'compile_mode', compile_mode );
 }
 
 async function load_os() {
+    const loc = '/js/kernel/';
+
     switch ( compile_mode ) {
 
         case 'source': {
             // @ts-ignore
-            return import( '/js/kernel/init/main.js' );
+            return import( loc + 'init/main.js' );
         }
     
         case 'compile' : {
             /** @type { import('/js/lib/compiler.js').JNIXBinary<'static'> } */
             // @ts-ignore
-            const bin = await proj_compile( '/js/kernel/', webserver_load_file );
+            const bin = await proj_compile( loc, webserver_load_file );
     
             return import( create_data_url( bin ) );
         }
     
         case 'load': {
     
-            const file = await webserver_load_file( '/js/src/kernel' );
+            const file = await webserver_load_file( '/jnix_kernel' );
     
             if ( file === null ) {
                 throw new Error( 'Failed to load the JNIX Kernel binary' );
