@@ -460,7 +460,7 @@ function file_get_export_lines( content ) {
 
         assert( type !== undefined, `Malformed export statement at line ${i}: ${ content[i] }` );
 
-        if ( type === 'function' || type === 'const' || type === 'let' ) {
+        if ( type === 'function' || type === 'const' || type === 'let' || type === 'class' ) {
             const name = line.shift();
 
             assert( name !== undefined, `Malformed export statement at line ${i}: ${ content[i] }` );
@@ -606,7 +606,7 @@ function file_preproc_get( file ) {
                 params: params.trim()
             } );
 
-            // file[ index ] = '';
+            file[ index ] = '';
         }
     } );
 
