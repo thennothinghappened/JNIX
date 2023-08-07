@@ -82,11 +82,11 @@ class JCError extends Error {
 }
 
 /**
- * Load a file. At the moment we will always assume it to be on the web server.
+ * Load a file, only from the web server.
  * @param { string } fname Filename
  * @returns { Promise<string?> }
  */
-async function example_load_file( fname ) {
+export async function webserver_load_file( fname ) {
     const res = await fetch( fname );
 
     if ( !res.ok ) {
@@ -101,6 +101,20 @@ async function example_load_file( fname ) {
     }
 
     return await res.text();
+}
+
+/**
+ * Create a Data URL from a binary
+ * @param { JNIXBinary<'static'> } binary 
+ * 
+ */
+export function create_data_url( binary ) {
+    return URL.createObjectURL(
+        new Blob(
+            [ binary.code ],
+            { type: 'application/javascript' }
+            )
+        );
 }
 
 /**
@@ -280,7 +294,7 @@ function pack_output_code( config, files, order ) {
     }
 
     out.push(
-        `return (async function() {`,
+        `(async function() {`,
         // @ts-ignore
         ...files.get( order.pop() ).content,
         `})();`
@@ -631,10 +645,3 @@ function file_get_import_lines( file, insts ) {
 function warn( message ) {
     console.warn( `JNIX Compilation: ${ message }` );
 }
-
-window.compiler = {
-    proj_compile,
-    compile,
-    link,
-    example_load_file
-};
