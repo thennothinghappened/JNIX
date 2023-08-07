@@ -7,7 +7,8 @@ if ( compile_mode === null ) {
     localStorage.setItem( 'compile_mode', compile_mode );
 }
 
-async function load_os() {
+/** @param { string } compile_mode  */
+async function load_os( compile_mode ) {
     const loc = '/js/kernel/';
 
     switch ( compile_mode ) {
@@ -18,19 +19,30 @@ async function load_os() {
         }
     
         case 'compile' : {
+
+            console.info( 'Compiling JNIX Kernel...' );
+
             /** @type { import('/js/lib/compiler.js').JNIXBinary<'static'> } */
             // @ts-ignore
             const bin = await proj_compile( loc, webserver_load_file );
+
+            try {
+                localStorage.setItem( 'jnix', JSON.stringify( bin ) );
+            } catch ( error ) {
+                console.error( 'Failed to save the Kernel to localStorage' );
+            }
+
+            console.info( 'Done.' );
     
             return import( create_data_url( bin ) );
         }
     
         case 'load': {
     
-            const file = await webserver_load_file( '/jnix_kernel' );
+            const file = localStorage.getItem( 'jnix' );
     
             if ( file === null ) {
-                throw new Error( 'Failed to load the JNIX Kernel binary' );
+                return load_os( 'compile' );
             }
             
             const bin = JSON.parse( file );
@@ -40,4 +52,4 @@ async function load_os() {
     }
 }
 
-load_os();
+load_os( compile_mode );
