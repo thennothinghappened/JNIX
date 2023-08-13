@@ -7,10 +7,15 @@ if ( compile_mode === null ) {
     localStorage.setItem( 'compile_mode', compile_mode );
 }
 
-/** @param { string } compile_mode  */
-async function load_os( compile_mode ) {
-    const loc = '/js/kernel/';
+const cmdline = localStorage.getItem( 'cmdline' ) ?? '';
 
+/**
+ * @param { string } compile_mode 
+ * @returns { Promise<{ start_kernel: ( cmdline: string ) => void }> }
+ **/
+async function load_kernel( compile_mode ) {
+    const loc = '/js/kernel/';
+    
     switch ( compile_mode ) {
 
         case 'source': {
@@ -29,7 +34,7 @@ async function load_os( compile_mode ) {
             try {
                 localStorage.setItem( 'jnix', JSON.stringify( bin ) );
             } catch ( error ) {
-                console.error( 'Failed to save the Kernel to localStorage' );
+                console.error( 'Bootloader: Failed to save the Kernel to localStorage' );
             }
 
             console.info( 'Done.' );
@@ -42,7 +47,7 @@ async function load_os( compile_mode ) {
             const file = localStorage.getItem( 'jnix' );
     
             if ( file === null ) {
-                return load_os( 'compile' );
+                return await load_kernel( 'compile' );
             }
             
             const bin = JSON.parse( file );
@@ -50,6 +55,9 @@ async function load_os( compile_mode ) {
             return import( create_data_url( bin ) );
         }
     }
+
+    throw new Error( 'Bootloader: No compile type specified' );
 }
 
-load_os( compile_mode );
+load_kernel( compile_mode )
+    .then( kernel => kernel.start_kernel( cmdline ) );

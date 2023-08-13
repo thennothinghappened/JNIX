@@ -1,5 +1,5 @@
 {
     "entryPoint": "init/main.js",
-    "type": "executable",
+    "type": "module",
     "linkingType": "static"
 }

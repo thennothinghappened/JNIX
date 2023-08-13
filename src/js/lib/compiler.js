@@ -1,4 +1,6 @@
 /**
+ * JNIX Program Compiler
+ * 
  * This is a test compiler, and will be *horribly bad*!
  * 
  * Purpose of this is just to get a minimal setup up and running
@@ -25,12 +27,15 @@ const JCProjInstruction = {
     dynamicImport: 'dynimport'
 };
 
+const valid_project_types = new Set( [ 'executable', 'module' ] );
+const valid_linking_types = new Set( [ 'static', 'dynamic' ] );
+
 /**
  * @template { 'static'|'dynamic' } LINK
  * @typedef JCProj<LINK>
  * @prop { string } entryPoint Entry point of the program
  * @prop { LINK } linkingType Whether this is a static or dynamically linked binary
- * @prop { 'executable'|'library' } type Whether this is an executable binary, or a dynamic library
+ * @prop { 'executable'|'module' } type Whether this is an executable binary, or a dynamic library (module)
  * @prop { string } author Author name
  * @prop { string } description Program description
  * @prop { number } version Program version
@@ -46,7 +51,7 @@ const JCProjInstruction = {
  * @template { 'static'|'dynamic' } LINK
  * @typedef JNIXBinary<LINK> Workable representation of a JNIX binary
  * @prop { LINK } linkingType Whether this is a static or dynamically linked binary
- * @prop { 'executable'|'library' } type Whether this is an executable binary, or a dynamic library
+ * @prop { 'executable'|'module' } type Whether this is an executable binary, or a dynamic library (module)
  * @prop { string } author Author name
  * @prop { string } description Program description
  * @prop { number } version Program version
@@ -130,21 +135,30 @@ function check_config( config ) {
 
     config.author = config.author ?? '';
     config.description = config.description ?? '';
-    
-    if ( !( 'linkingType' in config ) ) {
-        warn( 'Project linking type not specified, defaulting to "static".' );
-        // @ts-ignore
-        config.linkingType = 'static';
-    }
 
+    assert(
+        valid_linking_types.has( config.linkingType ),
+        `Invalid linkingType "${ config.linkingType }"`
+    );
+    
     if ( config.linkingType === 'dynamic' ) {
-        assert( Array.isArray( config.dynamicLink ), 'Project config "dynamicLink" invalid or missing for dynamically linked project.' );
+        assert(
+            Array.isArray( config.dynamicLink ),
+            'Project config "dynamicLink" invalid or missing for dynamically linked project.'
+        );
     }
 
     config.version = config.version ?? 1;
 
-    if ( typeof config.entryPoint !== 'string' ) throw new JCError( '"entryPoint" is not of type string' );
-    if ( config.type !== 'executable' && config.type !== 'library' ) throw new JCError( '"type" is not of type string' );
+    assert(
+        typeof config.entryPoint === 'string',
+        `entryPoint "${ config.entryPoint }" is not of type string`
+    );
+
+    assert(
+        valid_project_types.has( config.type ),
+        `type "${ config.type }" is not valid`
+    );
 }
 
 /**
@@ -210,7 +224,7 @@ export async function compile( config, load_file ) {
     // Order of our dependencies to exist in the final file
     const order = new Array();
 
-    const entry_file = file_parse( entry_point_fname, entry_point );
+    const entry_file = file_parse( entry_point_fname, entry_point, config.type === 'module' );
     await file_get_dependencies( files, config, entry_file, order, new Array(), load_file );
     
     files.set( entry_file.name, entry_file );
@@ -293,25 +307,20 @@ function pack_output_code( config, files, order ) {
         
     }
 
+    /** @type { JCFile } */
+    // @ts-ignore
+    const entry_file = files.get( order.pop() );
+
     out.push(
-        `(async function() {`,
-        // @ts-ignore
-        ...files.get( order.pop() ).content,
-        `})();`
+        ...entry_file.content
     );
 
     if ( config.type === 'executable' ) {
-        return out;
+        out.unshift( '(async function(){' );
+        out.push( '})()' );
     }
 
-    if ( config.type === 'library' ) {
-        out.unshift( '(async function() {' );
-        out.push( '})();' );
-
-        return out;
-    }
-
-    throw new JCError( `Output packing: Unrecognised output type ${ config.type }` );
+    return out;
     
 }
 
@@ -352,9 +361,10 @@ function file_split( file_string ) {
  * Parse a given file from a string
  * @param { string } name
  * @param { string } file_string
+ * @param { boolean } is_module Whether to leave this alone as an ES module (leave exports in tact)
  * @returns { JCFile }
  */
-function file_parse( name, file_string ) {
+function file_parse( name, file_string, is_module = false ) {
 
     const content = file_split( file_string );
     const insts = file_preproc_get( content );
@@ -379,16 +389,24 @@ function file_parse( name, file_string ) {
     /** @type { Set<string> } */
     const exports = new Set();
 
-    content.push(`;return {`);
+    if ( !is_module ) {
+        content.push(`;return {`);
+    }
 
     for ( const { line, name } of export_lines ) {
         exports.add( name );
+
+        if ( is_module ) {
+            continue;
+        }
 
         content[line] = content[line].replace( 'export ', '' );
         content.push( `    ${name},` );
     }
 
-    content.push( '};' );
+    if ( !is_module ) {
+        content.push( '};' );
+    }
 
     return {
         name,
